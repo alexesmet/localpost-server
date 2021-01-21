@@ -1,0 +1,13 @@
+[package]
+name = "basic-local-chat-server"
+version = "0.1.0"
+authors = ["alexesmet <alexes.met@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+tide = "0.15.0"
+async-std = { version = "1.8.0", features = ["attributes"] }
+serde = { version = "1.0", features = ["derive"] }
+rusqlite = "0.24.2"
+itertools = "0.10.0"
+chrono = "0.4.19"
