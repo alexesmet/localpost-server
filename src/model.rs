@@ -17,8 +17,15 @@ pub struct EmbeddedRecipient {
 pub struct MessageResponse {
     pub id: u32,
     pub text: String,
-    pub timestamp: i64,
+    pub timestamp: u32,
     pub sender_name: String,
     pub sender_id: u32,
     pub recepients: Vec<EmbeddedRecipient>
+}
+
+
+#[derive(Debug)]
+pub struct UserCredentials {
+    pub username: String,
+    pub password: String
 }

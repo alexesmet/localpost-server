@@ -1,7 +1,7 @@
-use rusqlite::{self, Connection, Error, NO_PARAMS, params};
+use rusqlite::{self, Connection, Error, params};
 use itertools::Itertools;
-use std::{iter::{FromIterator, IntoIterator}, time::UNIX_EPOCH};
-use std::time::SystemTime;
+use std::iter::{IntoIterator};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::convert::TryInto;
 
 use crate::model as m;
@@ -26,7 +26,8 @@ impl Repo {
         let conn = Connection::open(filename)?;
         conn.execute("
             CREATE TABLE IF NOT EXISTS users (
-                token TEXT NOT NULL,
+                username TEXT NOT NULL,
+                password TEXT NOT NULL,
                 name TEXT NOT NULL
             );
         ", rusqlite::NO_PARAMS)?;
@@ -49,7 +50,37 @@ impl Repo {
         return Ok(Self { conn });
     }
 
-    pub fn select_messages_by_token(&self, token: String) -> Result<Vec<m::MessageResponse>, Error> {
+    pub fn get_authenticated_user_id(&self, cred: &m::UserCredentials) -> Result<Option<u32>, Error> {
+        let mut stmt = self.conn.prepare("
+            SELECT u.ROWID FROM users u 
+            WHERE u.username = ?1 AND u.password = ?2
+        ")?;
+
+        match stmt.query_row(params![cred.username, cred.password], |row| {
+            Ok( row.get(0)? )
+        }) {
+            Ok(id) => { return Ok(Some(id)); }
+            Err(Error::QueryReturnedNoRows) => { return Ok(None) }
+            Err(n) => { return Err(n) }
+        }
+    }
+
+    pub fn register_user(&self, cred: &m::UserCredentials) -> Result<Option<u32>, Error> {
+        let updated_rows = self.conn.execute("
+            UPDATE users
+            SET password = ?1
+            WHERE username = :2 AND password = ''
+        ", params![ cred.password, cred.username ])?;
+
+        if updated_rows > 0 {
+            return self.get_authenticated_user_id(cred);
+        } else {
+            return Ok(None);
+        }
+        
+    }
+
+    pub fn select_messages_for_user(&self, user_id: u32) -> Result<Vec<m::MessageResponse>, Error> {
         let mut stmt = self.conn.prepare(" 
             SELECT 
                 m.ROWID, m.text, m.timestamp, mr.user_id, ur.name, us.name, m.user_id
@@ -61,12 +92,12 @@ impl Repo {
                 m.ROWID IN ( 
                     SELECT message_id 
                     FROM message_recipients mr2 JOIN users u2 ON mr2.user_id = u2.ROWID
-                    WHERE u2.token = ?1) 
+                    WHERE u2.ROWID = ?1) 
             ORDER BY
                 m.timestamp
         ")?;
 
-        let row_array = stmt.query_map(params![ token ], |row| {
+        let row_array = stmt.query_map(params![ user_id ], |row| {
             Ok( MessageRow { 
                 id: row.get(0)?,
                 text: row.get(1)?,
@@ -80,28 +111,58 @@ impl Repo {
         Ok(message_rows_to_message(row_array.into_iter()))
     }
 
+    pub fn select_message_by_id(&self, rowid: u32) -> Result<m::MessageResponse, Error> {
+        let mut stmt = self.conn.prepare(" 
+            SELECT 
+                m.ROWID, m.text, m.timestamp, mr.user_id, ur.name, us.name, m.user_id
+            FROM messages m
+                JOIN message_recipients mr ON mr.message_id = m.ROWID
+                JOIN users ur ON ur.ROWID = mr.user_id
+                JOIN users us ON us.ROWID = m.user_id
+            WHERE 
+                m.ROWID = ?1
+        ")?;
+
+        let row_array = stmt.query_map(params![ rowid ], |row| {
+            Ok( MessageRow { 
+                id: row.get(0)?,
+                text: row.get(1)?,
+                timestamp: row.get(2)?,
+                user_id: row.get(3)?,
+                user_name: row.get(4)?,
+                sender_name: row.get(5)?,
+                sender_id: row.get(6)?
+            })
+        })?.collect::<Result<Vec<_>,_>>()?;
+        return message_rows_to_message(row_array.into_iter())
+            .into_iter()
+            .next()
+            .ok_or(Error::QueryReturnedNoRows);
+    }
+
     pub fn insert_message(&self, sender_id: u32, req: m::PostMessageRequest) -> Result<m::MessageResponse, Error> {
-        let now = SystemTime::now()
+        let now: u32 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Can not count time anymore")
             .as_millis()
-            .try_into::<u32>()
+            .try_into()
             .expect("Can not count this much time");
 
         self.conn.execute(
-            " INSERT INTO messages (text, user_id, timestamp) VALUES (?1, ?2, ?3) "
-            &[req.text, sender_id, now]
+            " INSERT INTO messages (text, user_id, timestamp) VALUES (?1, ?2, ?3) ",
+            &[req.text.clone(), sender_id.to_string(), now.to_string()]
         )?;
 
-        let rowid = self.conn.last_insert_rowid()?;
+        let rowid = self.conn.last_insert_rowid();
+        // TODO: Wrap in transaction 
+        for recp in req.recipients.iter() {
+            self.conn.execute(
+                "INSERT INTO message_recipients (user_id, message_id) VALUES (?1, ?2)",
+                params![ recp, rowid ]
+            )?;
+        }
+        return self.select_message_by_id(rowid.try_into().unwrap());
 
-        self.conn.execute(
-            " INSERT INTO message_recipients () VALUES (?1, ?2, ?3) "
-            &[req.text, sender_id, now]
-        )?;
-
-
-        return todo!();
     }
 }
 

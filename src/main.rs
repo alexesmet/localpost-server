@@ -1,14 +1,26 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tide::prelude::json;
 use tide::Request;
+use ascii;
+use blake3;
+use tera;
 
+mod view;
 mod model;
 mod repository;
 
 #[derive(Clone)]
 struct State {
-    repo: Arc<Mutex<repository::Repo>>
+    repo: Arc<Mutex<repository::Repo>>,
+    view: Arc<view::View>
 }
+
+impl State {
+    fn lock_repo(&self) -> Result<MutexGuard<repository::Repo>, tide::Error> {
+        return self.repo.lock().map_err(|_| tide::Error::from_str(500, "Could not lock database."));
+    }
+}
+
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
@@ -16,14 +28,52 @@ async fn main() -> tide::Result<()> {
 
     let repo = repository::Repo::new("messages.db")
         .expect("Error while initializing database");
-    let state = State { repo: Arc::new(Mutex::new(repo)) };
-    let mut app = tide::with_state(state);
+    let mut tera = tera::Tera::new("templates/**/*")
+        .expect("Could not load templates");
+    tera.autoescape_on(vec!["html", ".sql"]);
 
+
+    let mut app = tide::with_state( State {
+        repo: Arc::new(Mutex::new(repo)),
+        view: Arc::new(view::View { tera })
+    });
+
+
+    // web pages
+    app.at("/").get(|req: Request<State>| async move {
+        let cred = match get_credentials(&req) {
+            Ok(token) => token,
+            Err(_) => {
+                return Ok(tide::Response::builder(401)
+                    .header("WWW-Authenticate", "Basic")
+                    .build())
+            }
+        };
+        let repo = req.state().lock_repo()?;
+        let _user_id: u32 = match repo.get_authenticated_user_id(&cred)? {
+            Some(n) => { n }
+            None => { repo.register_user(&cred)?
+                .ok_or(tide::Error::from_str(401, "Incorrect username or password"))? }
+        };
+
+
+        let body = req.state().view.render_index()
+            .map_err(|e| tide::Error::new(500, e))?;
+
+        return Ok(tide::Response::builder(200)
+            .body(body)
+            .content_type(tide::http::mime::HTML)
+            .build());
+    });
+
+    
     app.at("/messages").get(|req: Request<State>| async move {
 
-        let token = get_token(req)?;
-        let repo = req.state().repo.lock() .expect("can not lock database for reading");
-        let messages = repo.select_messages_by_token(token)?;
+        let cred = get_credentials(&req)?;
+        let repo = req.state().lock_repo()?;
+        let user_id = repo.get_authenticated_user_id(&cred)?
+            .ok_or(tide::Error::from_str(401, "Incorrect username or password"))?;
+        let messages = repo.select_messages_for_user(user_id)?;
 
         return Ok(json!(messages));
 
@@ -31,11 +81,15 @@ async fn main() -> tide::Result<()> {
 
     // Sending messages
     app.at("/messages").post(|mut req: Request<State>| async move {
-
-        let token = get_token(req)?;
+        let cred = get_credentials(&req)?;
         let body: model::PostMessageRequest = req.body_json().await?;
-
-        return Ok("Message Added"); // TODO: return new message
+        let repo = req.state().lock_repo()?;
+        let user_id = repo.get_authenticated_user_id(&cred)?
+            .ok_or(tide::Error::from_str(401, "Incorrect username or password"))?;
+        let response = repo.insert_message(user_id, body)?;
+        return Ok(tide::Response::builder(201)
+            .body(json!(response))
+            .build());
     });
 
 
@@ -46,8 +100,8 @@ async fn main() -> tide::Result<()> {
 
 
 
-fn get_token(req: Request<_>) -> Result<String, tide::Error> {
-    let authorization_words = req.header("Authorization")
+fn get_credentials(req: &Request<State>) -> Result<model::UserCredentials, tide::Error> {
+    let mut authorization_words = req.header("Authorization")
         .ok_or(tide::Error::from_str(401, "Authorization token is not provided"))?
         .as_str()
         .split_whitespace();
@@ -57,10 +111,27 @@ fn get_token(req: Request<_>) -> Result<String, tide::Error> {
         .eq("Basic");
 
     if !authorization_is_basic { 
-        return tide::Error::from_str(400, "Authroization type is not Basic")
+        return Err(tide::Error::from_str(400, "Authroization type is not Basic"))
     }
     
-    return authorization_words.next()
-        .ok_or(tide::Error::from_str(400, "Unexpected end of Authorization token"))
+    let token_encoded = authorization_words.next()
+        .ok_or(tide::Error::from_str(400, "Unexpected end of Authorization token"))?;
 
+    let token_bytes = base64::decode(token_encoded)
+        .map_err(|_| tide::Error::from_str(400, "Incorrectly encoded basic token"))?;
+
+    let mut token_split = ascii::AsciiStr::from_ascii(&token_bytes)
+        .map_err(|_| tide::Error::from_str(500, "Having a hard time decoding base64 to ascii"))?
+        .split(ascii::AsciiChar::Colon);
+    
+    let username = token_split.next()
+        .ok_or(tide::Error::from_str(400,"Incorrect token format"))
+        .map(ascii::AsciiStr::to_string)?;
+
+    let password = token_split.next()
+        .ok_or(tide::Error::from_str(400,"Incorrect token format"))
+        .map(ascii::AsciiStr::as_bytes)
+        .map(|v| blake3::hash(v).to_hex().to_string())?;
+
+    return Ok( model::UserCredentials { username, password });
 }
