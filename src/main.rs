@@ -28,7 +28,7 @@ async fn main() -> tide::Result<()> {
 
     let repo = repository::Repo::new("messages.db")
         .expect("Error while initializing database");
-    let mut tera = tera::Tera::new("templates/**/*")
+    let mut tera = tera::Tera::new("templates/*.html")
         .expect("Could not load templates");
     tera.autoescape_on(vec!["html", ".sql"]);
 
@@ -37,6 +37,8 @@ async fn main() -> tide::Result<()> {
         repo: Arc::new(Mutex::new(repo)),
         view: Arc::new(view::View { tera })
     });
+
+    app.at("/static").serve_dir("templates/static")?;
 
 
     // web pages
@@ -50,14 +52,15 @@ async fn main() -> tide::Result<()> {
             }
         };
         let repo = req.state().lock_repo()?;
-        let _user_id: u32 = match repo.get_authenticated_user_id(&cred)? {
+        let user_id: u32 = match repo.get_authenticated_user_id(&cred)? {
             Some(n) => { n }
             None => { repo.register_user(&cred)?
                 .ok_or(tide::Error::from_str(401, "Incorrect username or password"))? }
         };
 
+        let messages = repo.select_messages_for_user(user_id)?;
 
-        let body = req.state().view.render_index()
+        let body = req.state().view.render_index(messages)
             .map_err(|e| tide::Error::new(500, e))?;
 
         return Ok(tide::Response::builder(200)

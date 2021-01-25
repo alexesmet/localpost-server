@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;400;700&display=swap');
+
+body, input {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 18px;
+}
+
+textarea:focus, input:focus{
+    outline: none;
+}
+
+body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    width: 100%;
+    background-color: silver;
+    display: flex;
+    flex-grow: 0;
+    justify-content: center;
+}
+
+.logo {
+    font-weight: 800;
+}
+
+.width-keeper {
+    padding: 1em;
+    max-width: 40.20em;
+    flex-grow: 1;
+
+}
+
+.main {
+    flex-grow: 1;
+    display: flex;
+    align-items: center;
+    overflow-y: scroll;
+    flex-direction: column-reverse;
+}
+.main::-webkit-scrollbar {
+    display: none;
+}
+
+.messages {
+}
+
+.message {
+    margin-bottom: 1em;
+}
+.message .head {
+    font-weight: 600;
+    color: darkslategrey;
+}
+.message .text {
+    font-weight: 300;
+    clear: both;
+}
+.message .time {
+    color: gray;
+    float: right;
+    display: inline-block;
+    font-weight: 300;
+}
+
+.footer {
+    border-top: 1px solid silver;
+}
+
+.sender {
+    flex-grow: 0;
+    display: block;
+}
+
+.sender input[type=text] {
+    width: 100%;
+    padding: 0.5em;
+    margin-right: 0.5em;
+    border: 1px solid silver;
+}
+
+.sender input[type=submit] {
+    background-color: silver;
+    border: none;
+    padding: 0 1em;
+    flex-grow: 0;
+    font-weight: 800;
+}
+
+.d-flex {
+    display: flex;
+    width: 100%;
+    flex-direction: row;
+}
+
+.justify-center {
+    justify-content: center;
+}

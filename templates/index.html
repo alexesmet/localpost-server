@@ -3,9 +3,53 @@
 <head>
   <meta charset="UTF-8">
   <title>Localpost - Messages</title>
+  <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-    Hello there, my name is {{ name }}.
+  <header class="header">
+    <nav class="width-keeper">
+      <div class="logo">localpost:</div>
+    </nav>
+
+  </header>
+  <main class="main">
+    <div class="d-flex justify-center">  
+    <article class="width-keeper">
+      <div class="messages">
+        {% for msg in messages %}
+        <div class="message">
+          <div class="head">
+            <span style="color: {{msg.sender.color}}" title="{{msg.sender.name}}">{{ msg.sender.acronym }}</span>
+            -> [
+            {% for rep in msg.recipients %}
+            <span style="color: {{rep.color}}" title="{{ rep.name }}">{{ rep.acronym }}</span>
+            {% endfor %}
+            ]
+            <div class="time">{{ msg.time }}</div>
+          </div>
+          <div class="text">
+            {{ msg.text }}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </article>
+    </div>
+  </main>
+  <footer class="d-flex justify-center footer">
+    <div class="width-keeper">
+      <form autocomplete="off" class="sender">
+        <div class="d-flex">
+          <input autocomplete="off" id="text" type="text">
+          <input type="submit" value="Send">
+        </div>
+        <div class="d-flex">
+                 
+        </div>
+      </form>
+    </div>
+  </footer>
+
 
 </body>
 </html>
