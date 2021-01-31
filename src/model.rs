@@ -10,7 +10,8 @@ pub struct PostMessageRequest {
 #[derive(Serialize)]
 pub struct EmbeddedRecipient {
     pub id: u32,
-    pub name: String
+    pub name: String,
+    pub color: String
 }
 
 #[derive(Serialize)]
@@ -20,7 +21,8 @@ pub struct MessageResponse {
     pub timestamp: u32,
     pub sender_name: String,
     pub sender_id: u32,
-    pub recepients: Vec<EmbeddedRecipient>
+    pub sender_color: String,
+    pub recipients: Vec<EmbeddedRecipient>
 }
 
 

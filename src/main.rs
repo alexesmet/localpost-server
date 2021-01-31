@@ -17,7 +17,7 @@ struct State {
 
 impl State {
     fn lock_repo(&self) -> Result<MutexGuard<repository::Repo>, tide::Error> {
-        return self.repo.lock().map_err(|_| tide::Error::from_str(500, "Could not lock database."));
+        return self.repo.lock().map_err(|e| tide::Error::from_str(500, format!("Could not lock database: {:?}",e)));
     }
 }
 
@@ -59,8 +59,9 @@ async fn main() -> tide::Result<()> {
         };
 
         let messages = repo.select_messages_for_user(user_id)?;
+        let users = repo.select_users_all()?;
 
-        let body = req.state().view.render_index(messages)
+        let body = req.state().view.render_index(messages, users)
             .map_err(|e| tide::Error::new(500, e))?;
 
         return Ok(tide::Response::builder(200)
@@ -70,8 +71,39 @@ async fn main() -> tide::Result<()> {
     });
 
     
-    app.at("/messages").get(|req: Request<State>| async move {
+    app.at("/").post(|mut req: Request<State>| async move {
+        let cred = get_credentials(&req)?;
+        let body: std::collections::HashMap<String,String> = req.body_form().await?;
 
+        let repo = req.state().lock_repo()?;
+        let user_id = repo.get_authenticated_user_id(&cred)?
+            .ok_or(tide::Error::from_str(401, "Incorrect username or password"))?;
+        let users = repo.select_users_all()?;
+
+
+
+        let text = body.get("text").ok_or(tide::Error::from_str(400, "Missing text field"))?;
+        let recipients: Vec<u32> = users.iter()
+            .map(|u| (u.id, format!("usr{}", u.id)))
+            .map(|i| (i.0, body.get(&i.1).is_some()))
+            .filter(|i| i.1)
+            .map(|i| i.0)
+            .collect();
+
+        if recipients.len() == 0 {
+            return Ok(tide::Response::builder(400).body("No message recipients").build());
+        }
+
+        let message = model::PostMessageRequest { recipients, text: text.to_string() };
+
+        repo.insert_message(user_id, message)?;
+
+
+        return Ok(tide::Response::new(200));
+    });
+
+    
+    app.at("/messages").get(|req: Request<State>| async move {
         let cred = get_credentials(&req)?;
         let repo = req.state().lock_repo()?;
         let user_id = repo.get_authenticated_user_id(&cred)?
@@ -97,7 +129,7 @@ async fn main() -> tide::Result<()> {
 
 
 
-    app.listen("127.0.0.1:8080").await?;
+    app.listen("0.0.0.0:8080").await?;
     Ok(())
 }
 

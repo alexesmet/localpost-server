@@ -17,6 +17,7 @@ struct ViewMessage {
 
 #[derive(Serialize)]
 struct ViewPerson {
+    id: u32,
     name: String,
     acronym: String,
     color: String
@@ -27,29 +28,40 @@ fn to_acronym(name: &str) -> String {
 }
 
 impl View {
-    pub fn render_index(&self, msgs: Vec<model::MessageResponse>) -> tera::Result<String> {
-
+    pub fn render_index(
+        &self, 
+        msgs: Vec<model::MessageResponse>, 
+        users: Vec<model::EmbeddedRecipient>
+    ) -> tera::Result<String> {
         let view_messages: Vec<ViewMessage> = msgs.iter()
             .map(|m| ViewMessage {
                 sender: ViewPerson { 
+                    id: m.sender_id,
                     name: m.sender_name.clone(),
                     acronym: to_acronym(&m.sender_name),
-                    color: "#AA0000".to_string() 
+                    color: m.sender_color.clone()
                 },
                 text: m.text.clone(),
-                time: "today".to_string(),
-                recipients: m.recepients.iter().map(|r| ViewPerson {
+                time: m.timestamp.to_string(),
+                recipients: m.recipients.iter().map(|r| ViewPerson {
+                    id: r.id,
                     name: r.name.clone(),
                     acronym: to_acronym(&r.name),
-                    color: "#00BB00".to_string(),
+                    color: r.color.clone(),
                 }).collect(), 
                 
             })
             .collect();
 
+        let view_users: Vec<ViewPerson> = users.into_iter()
+            .map(|u| ViewPerson {
+                id: u.id, color: u.color, name: u.name.clone(), acronym: to_acronym(&u.name)
+            })
+            .collect();
+
         let mut context = tera::Context::new();
         context.insert("messages", &view_messages);
-
+        context.insert("users", &view_users);
 
         return self.tera.render("index.html", &context);
     }
