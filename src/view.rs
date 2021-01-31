@@ -1,5 +1,5 @@
 use tera;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use crate::model;
 use regex;
 
