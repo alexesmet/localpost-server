@@ -37,6 +37,7 @@ async fn main() -> tide::Result<()> {
         repo: Arc::new(Mutex::new(repo)),
         view: Arc::new(view::View { tera })
     });
+    app.with(tide_compress::CompressMiddleware::new());
 
     app.at("/static").serve_dir("templates/static")?;
 
