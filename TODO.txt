@@ -1,5 +1,4 @@
 - Offline fonts
-- Return fresh page on form post
 - Websockets for messages
 - Javascript for button to send without reload
 - Add favorite recepient list on bottom

@@ -92,15 +92,27 @@ async fn main() -> tide::Result<()> {
             .collect();
 
         if recipients.len() == 0 {
-            return Ok(tide::Response::builder(400).body("No message recipients").build());
+            return Ok(tide::Response::builder(400)
+                .body(format!("No message recipients provided. Your message: {}", text))
+                .build());
         }
 
         let message = model::PostMessageRequest { recipients, text: text.to_string() };
 
         repo.insert_message(user_id, message)?;
 
+        // Return fresh page
+        let messages = repo.select_messages_for_user(user_id)?;
+        let users = repo.select_users_all()?;
 
-        return Ok(tide::Response::new(200));
+        let body = req.state().view.render_index(messages, users)
+            .map_err(|e| tide::Error::new(500, e))?;
+
+        return Ok(tide::Response::builder(200)
+            .body(body)
+            .content_type(tide::http::mime::HTML)
+            .build());
+
     });
 
     
@@ -127,8 +139,6 @@ async fn main() -> tide::Result<()> {
             .body(json!(response))
             .build());
     });
-
-
 
     app.listen("0.0.0.0:8080").await?;
     Ok(())
