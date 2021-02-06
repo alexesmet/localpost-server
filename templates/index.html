@@ -27,7 +27,8 @@
             <span style="color: {{rep.color}}" title="{{ rep.name }}">{{ rep.acronym }}</span>
             {% endfor %}
             ]
-            <div class="time">{{ msg.time }}</div>
+            <span class="time" title="{{ msg.time_full }}">{{ msg.time }}</span>
+            <!-- TOOD: Display full datetime on focus -->
           </div>
           <div class="text">
             {{ msg.text }}
@@ -42,7 +43,7 @@
     <div class="width-keeper">
       <form action="" method="post" autocomplete="off" id="form" class="sender">
         <div class="d-flex mb-1">
-          <textarea form="form" name="text" rows="1" cols="50" required></textarea>
+          <input type="text" form="form" name="text" rows="1" cols="50" required>
           <input type="submit" value="Send" class="button">
         </div>
         <div class="d-flex no-h-scroll">
@@ -69,90 +70,7 @@
       </form>
     </div>
   </footer>
-  <script>
-
-
-    const form = document.querySelector("form.sender");
-    const statusbar = document.getElementById("form-status-bar");
-    const submit = document.querySelector("form.sender input[type=submit]");
-    const r_checks = Array.from(document.querySelectorAll("form.sender input[type=checkbox].recipient-checkbox"));
-    const comma = document.createTextNode(",");
-    const bracket = document.createTextNode("]");
-
-    statusbar.style.color = "darkslategrey";
-    statusbar.textContent = "rendering...";
-
-    let r_arr_marks = {};
-
-    const onCheckClick = (e) => {
-      if (e.target.checked) {
-        if ( statusbar.textContent == "> no recipients") statusbar.textContent = "> [";
-
-        let label = r_arr_marks[e.target.id];
-        if (!label) {
-          const acronyms = e.target.parentElement.getElementsByClassName("acronym");
-          if (acronyms.length > 0) {
-            label = acronyms[0].cloneNode(true);
-            r_arr_marks[e.target.id] = label;
-          }
-        }
-        if (statusbar.contains(bracket)) statusbar.removeChild(bracket);
-        if (statusbar.lastChild.nodeType != 3) {
-          last_comma = comma.cloneNode(true);
-          statusbar.appendChild(last_comma);
-        }
-        statusbar.appendChild(label);
-        statusbar.appendChild(bracket);
-      } else {
-        let label = r_arr_marks[e.target.id];
-        let prev = label.previousSibling;
-        let next = label.nextSibling;
-        if (statusbar.contains(label)) statusbar.removeChild(label);
-        if (prev && prev.textContent == ",") statusbar.removeChild(prev);
-        else {
-          if (next && next.textContent == ",") statusbar.removeChild(next);
-        }
-
-      }
-    };
-
-
-    const renderStatusBar = (e) => {
-      let is_empty = true;
-      statusbar.textContent = "> [";
-
-      let last_comma = null;
-      for (let i = 0; i < r_checks.length; i++) {
-        let each = r_checks[i];
-        if (each.checked) {
-          is_empty = false;
-          let label = r_arr_marks[each.id];
-          if (!label) {
-            const acronyms = each.parentElement.getElementsByClassName("acronym");
-            if (acronyms.length > 0) {
-              label = acronyms[0].cloneNode(true);
-              r_arr_marks[each.id] = label;
-            }
-          }
-          statusbar.appendChild(label);
-          last_comma = comma.cloneNode(true);
-          comma_stack.push(last_comma);
-          statusbar.appendChild(last_comma);
-        }
-      }
-      if (is_empty) {
-        statusbar.textContent = "> no recipients";
-      } else {
-        statusbar.removeChild(last_comma)  
-        statusbar.appendChild(bracket);
-      }
-    };
-
-    r_checks.forEach(a => a.addEventListener("change", onCheckClick));
-    renderStatusBar();
-
-    
-  </script>
+  <script src="static/index.js" type="text/javascript"></script>
 
 
 

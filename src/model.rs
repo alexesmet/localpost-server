@@ -7,18 +7,18 @@ pub struct PostMessageRequest {
     pub text: String
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct EmbeddedRecipient {
     pub id: u32,
     pub name: String,
     pub color: String
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct MessageResponse {
     pub id: u32,
     pub text: String,
-    pub timestamp: u32,
+    pub timestamp: i64,
     pub sender_name: String,
     pub sender_id: u32,
     pub sender_color: String,

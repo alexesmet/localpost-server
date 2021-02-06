@@ -1,7 +1,9 @@
 use tera;
 use serde::Serialize;
+use chrono::TimeZone;
 use crate::model;
 use regex;
+use chrono;
 
 pub struct View {
     pub tera: tera::Tera
@@ -12,6 +14,7 @@ struct ViewMessage {
     sender: ViewPerson,
     text: String,
     time: String,
+    time_full: String,
     recipients: Vec<ViewPerson>
 }
 
@@ -42,7 +45,8 @@ impl View {
                     color: m.sender_color.clone()
                 },
                 text: m.text.clone(),
-                time: m.timestamp.to_string(),
+                time: chrono::offset::Local.timestamp(m.timestamp,0).format("%H:%M").to_string(),
+                time_full: chrono::offset::Local.timestamp(m.timestamp,0).format("%Y-%m-%d %H:%M:%S").to_string(),
                 recipients: m.recipients.iter().map(|r| ViewPerson {
                     id: r.id,
                     name: r.name.clone(),

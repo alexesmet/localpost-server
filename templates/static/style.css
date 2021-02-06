@@ -100,7 +100,7 @@ body {
     display: block;
 }
 
-.sender textarea {
+.sender textarea, .sender input[type=text] {
     width: 100%;
     padding: 0.5em;
     margin-right: 0.5em;

@@ -17,7 +17,7 @@ struct MessageRow {
     recipient_id: u32,
     recipient_name: String,
     recipient_color: String,
-    timestamp: u32,
+    timestamp: i64,
     sender_name: String,
     sender_color: String,
     sender_id: u32
@@ -163,7 +163,7 @@ impl Repo {
     }
 
     pub fn insert_message(&self, sender_id: u32, req: m::PostMessageRequest) -> Result<m::MessageResponse, Error> {
-        let now: u32 = SystemTime::now()
+        let now: i64 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Can not count time anymore")
             .as_secs()
