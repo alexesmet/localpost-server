@@ -1,6 +1,6 @@
 [package]
 name = "localpost-server"
-version = "1.2.0"
+version = "1.2.3"
 authors = ["alexesmet <alexes.met@gmail.com>"]
 edition = "2018"
 

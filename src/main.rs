@@ -25,14 +25,118 @@ struct State {
 
 impl State {
     fn lock_repo(&self) -> Result<MutexGuard<repository::Repo>, tide::Error> {
-        return self.repo.lock().map_err(|e| tide::Error::from_str(500,format!("Could not lock database: {:?}",e)));
+        tide::log::trace!("Locking repo...");
+        return self.repo.lock().map_err(|e|tide::Error::from_str(500,format!("Couldn't lock database: {:?}",e)));
+    }
+
+    fn broadcast_message(&self, msg: &model::MessageResponse) -> Result<(), tide::Error> {
+        tide::log::debug!("Locking message listeners for notification...");
+        self.messages_txs.lock()
+            .map_err(|e| tide::Error::from_str(500, format!("Could not lock websockets: {:?}",e)))?
+            .retain(|(id, tx)| {
+                if !msg.sender_id.eq(id) && !msg.recipients.iter().any(|r| r.id.eq(id)) {
+                    return true;
+                }
+                let sending_result = tx.send(msg.clone());
+                if let Err(mpsc::SendError(_)) = sending_result { 
+                    tide::log::debug!("Removing one message listener");
+                    return false;
+                } else { return true; }
+            });
+        tide::log::debug!("Releasing message listeners for notification...");
+        return Ok(());
+    }
+    fn create_token(username: String, user_id: u32, exp_time: u64) -> String {
+        let token_a = base64::encode(format!("{}:{}:{}", username, user_id, exp_time));
+        let token_a_salt = format!("{}{}", token_a, SERVER_SECRET);
+        let token_b = blake3::hash(token_a_salt.as_bytes()).to_hex().to_string();
+        return format!("{}.{}", token_a, token_b);
+    }
+    fn parse_token(token: &str) -> Option<(String,u32)> {
+        let mut token_split = token.split('.');
+        let token_a = token_split.next()?;
+        let token_b = token_split.next()?;
+        let token_a_salt = format!("{}{}", token_a, SERVER_SECRET);
+
+        // TODO: Check if password changed!!!
+        if blake3::hash(token_a_salt.as_bytes()).to_hex().to_string().ne(token_b) {
+            return None;
+        } else {
+            let decoded = String::from_utf8(base64::decode(token_a).ok()?).ok()?;
+            let mut split = decoded.split(':');
+            let username = split.next()?;
+            let user_id = split.next()?;
+            let exp_time = split.next()?;
+
+            let now = time::SystemTime::now().duration_since(time::UNIX_EPOCH).ok()?;
+            if time::Duration::new(exp_time.parse().ok()?, 0) < now { return None; }
+
+            return Some((username.to_string(), user_id.parse().ok()?));
+        }
+    }
+
+    fn get_authenticated_user_id(&self, req: &Request<State>) -> Result<(u32, String), tide::Error> {
+        let mut authorization_words = req.header("Authorization")
+            .ok_or(tide::Error::from_str(401, "Authorization token is not provided"))?
+            .as_str()
+            .split_whitespace();
+
+        let auth_type = authorization_words.next()
+            .ok_or(tide::Error::from_str(400, "Unexpected end of Authorization token"))?;
+
+        let repo = self.lock_repo()?;
+        tide::log::trace!("AUTH: Repo locked.");
+
+        match auth_type {
+            "Bearer" => {
+                let token_encoded = authorization_words.next()
+                    .ok_or(tide::Error::from_str(400, "Unexpected end of Authorization token"))?;
+
+                let (username, id) = Self::parse_token(token_encoded)
+                    .ok_or(tide::Error::from_str(401, "Bearer token is invalid"))?;
+
+                return Ok((id, username));
+            },
+            "Basic" => {
+                let token_encoded = authorization_words.next()
+                    .ok_or(tide::Error::from_str(400, "Unexpected end of Authorization token"))?;
+
+                let token_bytes = base64::decode(token_encoded)
+                    .map_err(|_| tide::Error::from_str(400, "Incorrectly encoded basic token"))?;
+
+                let token_string = String::from_utf8(token_bytes)
+                    .map_err(|_| tide::Error::from_str(500, "Having a hard time decoding base64 to ascii"))?;
+
+                let mut token_split = token_string.split(":");
+                
+                let username = token_split.next()
+                    .ok_or(tide::Error::from_str(400,"Incorrect token format"))?
+                    .to_string();
+
+                let password = token_split.next()
+                    .ok_or(tide::Error::from_str(400,"Incorrect token format"))
+                    .map(|v| v.as_bytes())
+                    .map(|v| blake3::hash(&v).to_hex().to_string())?;
+
+                let cred = model::UserCredentials { username: username.clone(), password };
+
+                let user_id: u32 = match repo.get_authenticated_user_id(&cred)? {
+                    Some(n) => { n }
+                    None => { repo.register_user(&cred)?
+                        .ok_or(tide::Error::from_str(401, "Incorrect username or password"))? }
+                };
+
+                return Ok((user_id, username));
+            },
+            _ => { return Err(tide::Error::from_str(400, "Authroization type is unknown")) }
+        }
     }
 }
 
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
-    tide::log::start();
+    tide::log::with_level(tide::log::LevelFilter::Trace);
 
     let repo = repository::Repo::new("messages.db")
         .expect("Error while initializing database");
@@ -55,31 +159,17 @@ async fn main() -> tide::Result<()> {
 
     // web pages
     app.at("/").get(|req: Request<State>| async move {
-        // get credentials
-        let cred = match get_credentials(&req) {
-            Ok(token) => token,
-            Err(_) => {
-                return Ok(tide::Response::builder(401)
-                    .header("WWW-Authenticate", "Basic")
-                    .build())
-            }
-        };
         // authenticate with credentials
-        let repo = req.state().lock_repo()?;
-        let user_id: u32 = match repo.get_authenticated_user_id(&cred)? {
-            Some(n) => { n }
-            None => { repo.register_user(&cred)?
-                .ok_or(tide::Error::from_str(401, "Incorrect username or password"))? }
-        };
+        let (user_id, username) = req.state().get_authenticated_user_id(&req)?;
         // generate authorization token
         let expiration_time = (time::SystemTime::now()+TOKEN_EXPIRATION)
             .duration_since(time::UNIX_EPOCH)
             .expect("Can not count time anymore")
             .as_secs();
-        
-        let token = create_token(cred.username, user_id, expiration_time);
+        let token = State::create_token(username, user_id, expiration_time);
 
         // render page
+        let repo = req.state().lock_repo()?;
         let messages = repo.select_messages_for_user(user_id)?;
         let users = repo.select_users_all()?;
         let body = req.state().view.render_index(messages, users)
@@ -94,15 +184,14 @@ async fn main() -> tide::Result<()> {
 
     // html form 
     app.at("/").post(|mut req: Request<State>| async move {
-        // get credentials
-        let cred = get_credentials(&req)?;
-        let body: std::collections::HashMap<String,String> = req.body_form().await?;
-        // authenticate with credentials
-        let repo = req.state().lock_repo()?;
-        let user_id = repo.get_authenticated_user_id(&cred)?
-            .ok_or(tide::Error::from_str(401, "Incorrect username or password"))?;
-        let users = repo.select_users_all()?;
+        // auth
+        let (user_id, _) = req.state().get_authenticated_user_id(&req)?;
         // parse message
+        tide::log::trace!("Parsing message request..");
+        let body: std::collections::HashMap<String,String> = req.body_form().await?;
+        let repo = req.state().lock_repo()?;
+        let users = repo.select_users_all()?;
+        tide::log::trace!("Parsing message request..");
         let text = body.get("text").ok_or(tide::Error::from_str(400, "Missing text field"))?;
         let recipients: Vec<u32> = users.iter()
             .map(|u| (u.id, format!("usr{}", u.id)))
@@ -116,15 +205,20 @@ async fn main() -> tide::Result<()> {
                 .body(format!("No message recipients provided. Your message: {}", text))
                 .build());
         }
+        tide::log::trace!("Inserting message to DB..");
+        // insert message
         let message = model::PostMessageRequest { recipients, text: text.to_string() };
         let response = repo.insert_message(user_id, message)?;
 
 
         // Send to websockets
-        broadcast_message(&(req.state().messages_txs), &response)?;
+        tide::log::trace!("Broadcast message to listeners...");
+        req.state().broadcast_message(&response)?;
         
         // Return fresh page
+        tide::log::trace!("Selecting fresh messages...");
         let messages = repo.select_messages_for_user(user_id)?;
+        tide::log::trace!("Rendering fresh page...");
         let body = req.state().view.render_index(messages, users)
             .map_err(|e| tide::Error::new(500, e))?;
 
@@ -132,10 +226,9 @@ async fn main() -> tide::Result<()> {
             .body(body)
             .content_type(tide::http::mime::HTML)
             .build());
-
     });
 
-    // websocket: WIP
+    // websocket
     app.at("/websocket").get(WebSocket::new(|req: Request<State>, mut stream| async move {
         use std::borrow::Cow;
 
@@ -147,7 +240,7 @@ async fn main() -> tide::Result<()> {
             Err(tide_websockets::Error::Protocol(Cow::from("Unexpected end of stream")))
         }?;
 
-        let (_, user_id) = parse_token(token)
+        let (_, user_id) = State::parse_token(&token)
             .ok_or(tide_websockets::Error::Protocol(Cow::from("Could not parse token")))?;
 
         let (tx, rx): (mpsc::Sender<_>, mpsc::Receiver<_>) = mpsc::channel();
@@ -170,24 +263,27 @@ async fn main() -> tide::Result<()> {
 
     // WIP
     app.at("/messages").get(|req: Request<State>| async move {
-        let cred = get_credentials(&req)?;
+        // auth
+        let (user_id, _) = req.state().get_authenticated_user_id(&req)?;
+        // lock
         let repo = req.state().lock_repo()?;
-        let user_id = repo.get_authenticated_user_id(&cred)?
-            .ok_or(tide::Error::from_str(401, "Incorrect username or password"))?;
+        // get
         let messages = repo.select_messages_for_user(user_id)?;
 
         return Ok(json!(messages));
 
     });
 
-    // WIP
+    // REST post message. TODO: Two-way auth when https is ready
     app.at("/messages").post(|mut req: Request<State>| async move {
-        let cred = get_credentials(&req)?;
+        let (user_id, _) = req.state().get_authenticated_user_id(&req)?;
+
         let body: model::PostMessageRequest = req.body_json().await?;
         let repo = req.state().lock_repo()?;
-        let user_id = repo.get_authenticated_user_id(&cred)?
-            .ok_or(tide::Error::from_str(401, "Incorrect username or password"))?;
         let response = repo.insert_message(user_id, body)?;
+
+        req.state().broadcast_message(&response)?;
+
         return Ok(tide::Response::builder(201)
             .body(json!(response))
             .build());
@@ -197,91 +293,6 @@ async fn main() -> tide::Result<()> {
     Ok(())
 }
 
-fn create_token(username: String, user_id: u32, exp_time: u64) -> String {
-    let token_a = base64::encode(format!("{}:{}:{}", username, user_id, exp_time));
-    let token_a_salt = format!("{}{}", token_a, SERVER_SECRET);
-    let token_b = blake3::hash(token_a_salt.as_bytes()).to_hex().to_string();
-    return format!("{}.{}", token_a, token_b);
-}
-
-fn parse_token(token: String) -> Option<(String,u32)> {
-    let mut token_split = token.split('.');
-    let token_a = token_split.next()?;
-    let token_b = token_split.next()?;
-    let token_a_salt = format!("{}{}", token_a, SERVER_SECRET);
-
-    if blake3::hash(token_a_salt.as_bytes()).to_hex().to_string().ne(token_b) {
-        return None;
-    } else {
-        let decoded = String::from_utf8(base64::decode(token_a).ok()?).ok()?;
-        let mut split = decoded.split(':');
-        let username = split.next()?;
-        let user_id = split.next()?;
-        let exp_time = split.next()?;
-
-        let now = time::SystemTime::now().duration_since(time::UNIX_EPOCH).ok()?;
-        if time::Duration::new(exp_time.parse().ok()?, 0) < now { return None; }
-
-        return Some((username.to_string(), user_id.parse().ok()?));
-    }
-}
 
 
-
-
-
-fn get_credentials(req: &Request<State>) -> Result<model::UserCredentials, tide::Error> {
-    let mut authorization_words = req.header("Authorization")
-        .ok_or(tide::Error::from_str(401, "Authorization token is not provided"))?
-        .as_str()
-        .split_whitespace();
-
-    let authorization_is_basic = authorization_words.next()
-        .ok_or(tide::Error::from_str(400, "Unexpected end of Authorization token"))?
-        .eq("Basic");
-
-    if !authorization_is_basic { 
-        return Err(tide::Error::from_str(400, "Authroization type is not Basic"))
-    }
-    
-    let token_encoded = authorization_words.next()
-        .ok_or(tide::Error::from_str(400, "Unexpected end of Authorization token"))?;
-
-    let token_bytes = base64::decode(token_encoded)
-        .map_err(|_| tide::Error::from_str(400, "Incorrectly encoded basic token"))?;
-
-    let token_string = String::from_utf8(token_bytes)
-        .map_err(|_| tide::Error::from_str(500, "Having a hard time decoding base64 to ascii"))?;
-
-    let mut token_split = token_string.split(":");
-    
-    let username = token_split.next()
-        .ok_or(tide::Error::from_str(400,"Incorrect token format"))?
-        .to_string();
-
-    let password = token_split.next()
-        .ok_or(tide::Error::from_str(400,"Incorrect token format"))
-        .map(|v| v.as_bytes())
-        .map(|v| blake3::hash(&v).to_hex().to_string())?;
-
-    return Ok( model::UserCredentials { username, password });
-}
-
-fn broadcast_message(messages_txs: &Mutex<Vec<(u32, mpsc::Sender<model::MessageResponse>)>>, msg: &model::MessageResponse) -> Result<(), tide::Error> {
-    messages_txs.lock()
-        .map_err(|e| tide::Error::from_str(500, format!("Could not lock websockets: {:?}",e)))?
-        .retain(|(id, tx)| {
-            if !msg.sender_id.eq(id) && !msg.recipients.iter().any(|r| r.id.eq(id)) {
-                return true;
-            }
-            let sending_result = tx.send(msg.clone());
-            if let Err(mpsc::SendError(_)) = sending_result {
-                return false;
-            } else { 
-                return true; 
-            }
-        });
-
-    return Ok(());
-}
 

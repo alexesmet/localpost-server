@@ -107,10 +107,20 @@ body {
     border: 1px solid silver;
 }
 
+.sender input[type=file] {
+    display: none;
+}
+
+.sender input[type=file]::before {
+    content: "F:"
+}
+
 .button {
-    background-color: silver;
+    background: silver;
     border: none;
     padding: 0.5rem 1em;
+    outline: none;
+    cursor: pointer;
     flex-grow: 0;
     font-weight: 800;
 }

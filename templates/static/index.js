@@ -4,6 +4,7 @@ const cookies = () => document.cookie
 
 
 const form = document.querySelector("form.sender");
+const form_text = document.querySelector("form.sender input[name=text]");
 const statusbar = document.getElementById("form-status-bar");
 const submit = document.querySelector("form.sender input[type=submit]");
 const r_checks = Array.from(document.querySelectorAll("form.sender input[type=checkbox].recipient-checkbox"));
@@ -13,43 +14,72 @@ const bracket = document.createTextNode("]");
 
 statusbar.style.color = "darkslategrey";
 statusbar.textContent = "rendering...";
+let status_bar_wellformed = false;
+
+// =============================================================================
+// TO SHOW ERRORS
+
+const showError = err => {
+    let msg = document.createElement("span");
+    msg.style.color = "red";
+    msg.style.cursor = "pointer";
+    msg.innerText = "{error}"
+    msg.onclick = () => {
+        let pre = document.createElement("pre");
+        pre.textContent = err + "\n===\n" + JSON.stringify(err, null, 2);
+        document.body.innerHTML = '';
+        document.body.appendChild(pre);
+    }
+    statusbar.innerHTML = ''
+    statusbar.replaceChildren(msg);
+
+}
+
+// =============================================================================
+// UPDATE STATUS BAR
 
 let r_arr_marks = {};
-
 const onCheckClick = (e) => {
-  if (e.target.checked) {
-    if ( statusbar.textContent == "> no recipients") statusbar.textContent = "> [";
+  if (status_bar_wellformed) {
+    if (e.target.checked) {
+      if ( statusbar.textContent == "> no recipients") statusbar.textContent = "> [";
 
-    let label = r_arr_marks[e.target.id];
-    if (!label) {
-      const acronyms = e.target.parentElement.getElementsByClassName("acronym");
-      if (acronyms.length > 0) {
-        label = acronyms[0].cloneNode(true);
-        r_arr_marks[e.target.id] = label;
+      let label = r_arr_marks[e.target.id];
+      if (!label) {
+        const acronyms = e.target.parentElement.getElementsByClassName("acronym");
+        if (acronyms.length > 0) {
+          label = acronyms[0].cloneNode(true);
+          r_arr_marks[e.target.id] = label;
+        }
       }
-    }
-    if (statusbar.contains(bracket)) statusbar.removeChild(bracket);
-    if (statusbar.lastChild.nodeType != 3) {
-      last_comma = comma.cloneNode(true);
-      statusbar.appendChild(last_comma);
-    }
-    statusbar.appendChild(label);
-    statusbar.appendChild(bracket);
-  } else {
-    let label = r_arr_marks[e.target.id];
-    let prev = label.previousSibling;
-    let next = label.nextSibling;
-    if (statusbar.contains(label)) statusbar.removeChild(label);
-    if (prev && prev.textContent == ",") statusbar.removeChild(prev);
-    else {
-      if (next && next.textContent == ",") statusbar.removeChild(next);
-    }
+      if (statusbar.contains(bracket)) statusbar.removeChild(bracket);
+      if (statusbar.lastChild.nodeType != 3) {
+        last_comma = comma.cloneNode(true);
+        statusbar.appendChild(last_comma);
+      }
+      statusbar.appendChild(label);
+      statusbar.appendChild(bracket);
+    } else {
+      let label = r_arr_marks[e.target.id];
+      let prev = label.previousSibling;
+      let next = label.nextSibling;
+      if (statusbar.contains(label)) statusbar.removeChild(label);
+      if (prev && prev.textContent == ",") statusbar.removeChild(prev);
+      else {
+        if (next && next.textContent == ",") statusbar.removeChild(next);
+      }
 
+    }
+  } else {
+    renderStatusBar();
   }
 };
 
 
-const renderStatusBar = (e) => {
+// =============================================================================
+// RENDER STATUS BAR
+
+const renderStatusBar = () => {
   let is_empty = true;
   statusbar.textContent = "> [";
 
@@ -78,11 +108,14 @@ const renderStatusBar = (e) => {
     statusbar.removeChild(last_comma)  
     statusbar.appendChild(bracket);
   }
+  status_bar_wellformed = true;
 };
 
 r_checks.forEach(a => a.addEventListener("change", onCheckClick));
 renderStatusBar();
 
+// =============================================================================
+// WEB SOCKETS
 
 let socket = new WebSocket("ws://"+window.location.host+"/websocket"); 
 socket.onopen = e => socket.send(cookies().token); 
@@ -134,10 +167,26 @@ socket.onmessage = e => {
     msg_part.appendChild(head_part);
     msg_part.appendChild(text_part);
     messages.appendChild(msg_part);
-
-
-
 }
 
+// =============================================================================
+// AJAX POST FORM
 
+form.addEventListener("submit", async e => {
+    e.preventDefault();
+    let data = { 
+        text: form_text.value,
+        recipients: r_checks.filter(c => c.checked).map(c => +c.getAttribute("data-id"))
+    };
 
+    await fetch(window.location.origin+"/messages", {
+        method: "POST",
+        body: JSON.stringify(data),
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+    }).catch(e => {
+        showError(e)
+    });
+});
