@@ -42,12 +42,16 @@
   <footer class="d-flex justify-center footer">
     <div class="width-keeper">
       <form action="" method="post" autocomplete="off" id="form" class="sender">
-        <div class="d-flex mb-1">
+        <!-- TODO  enctype="multipart/form-data" -->
+        <div class="d-flex mb-05">
           <input type="text" form="form" name="text" rows="1" cols="50" required>
           <input type="submit" value="Send" class="button">
         </div>
         <div class="d-flex no-h-scroll">
-          <!-- <input name="file" type="file" value="File"> -->
+          <div class="popup-container"> 
+              <label for="upload-file" class="button mr-05 popup-label">F:</label>
+              <input name="upload-file" id="upload-file" type="file" value="File">
+          </div> 
           <div class="popup-container">
             <input class="popup-trigger" id="trigger" type="checkbox"/>
             <div class="popup-itself">

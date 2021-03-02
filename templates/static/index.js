@@ -1,6 +1,6 @@
 const cookies = () => document.cookie
     .split(";")
-    .reduce((o,c) => ({...o, [/[^=]+/.exec(c)]: /(?<=\=).+/.exec(c)[0]}), {});
+    .reduce((o,c) => ({...o, [/[^ =]+/.exec(c).strip()]: /(?<=\=).+/.exec(c)[0]}), {});
 
 
 const form = document.querySelector("form.sender");
@@ -42,7 +42,7 @@ let r_arr_marks = {};
 const onCheckClick = (e) => {
   if (status_bar_wellformed) {
     if (e.target.checked) {
-      if ( statusbar.textContent == "> no recipients") statusbar.textContent = "> [";
+      if ( statusbar.textContent == "> []") statusbar.textContent = "> [";
 
       let label = r_arr_marks[e.target.id];
       if (!label) {
@@ -103,7 +103,7 @@ const renderStatusBar = () => {
     }
   }
   if (is_empty) {
-    statusbar.textContent = "> no recipients";
+    statusbar.textContent = "> []";
   } else {
     statusbar.removeChild(last_comma)  
     statusbar.appendChild(bracket);
@@ -119,7 +119,10 @@ renderStatusBar();
 
 let socket = new WebSocket("ws://"+window.location.host+"/websocket"); 
 socket.onopen = e => socket.send(cookies().token); 
-socket.onclose = () => alert("Websocket closed");
+socket.onclose = (e) => {
+    alert("Websocket closed");
+    console.error(e);
+}
 socket.onmessage = e => {
     let data = JSON.parse(e.data);
     let text_part = document.createElement("div");
@@ -172,7 +175,7 @@ socket.onmessage = e => {
 // =============================================================================
 // AJAX POST FORM
 
-form.addEventListener("submit", async e => {
+form.addEventListener("submitb", async e => {
     e.preventDefault();
     let data = { 
         text: form_text.value,
