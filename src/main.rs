@@ -6,6 +6,7 @@ use tide::prelude::json;
 use tide::Request;
 use std::iter::Iterator;
 
+use futures::io::{AsyncBufRead, AsyncBufReadExt};
 
 use blake3;
 use tera;
@@ -142,7 +143,7 @@ impl State {
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
-    tide::log::with_level(tide::log::LevelFilter::Info);
+    //tide::log::with_level(tide::log::LevelFilter::Info);
 
     let repo = repository::Repo::new("messages.db")
         .expect("Error while initializing database");
@@ -191,7 +192,7 @@ async fn main() -> tide::Result<()> {
             .body(body)
             .content_type(tide::http::mime::HTML)
             .header("Set-Cookie", format!("token={}; Max-Age={}", token, TOKEN_EXPIRATION.as_secs()))
-            .build());
+            .build())
     });
 
     // html form 
@@ -211,7 +212,6 @@ async fn main() -> tide::Result<()> {
 
         if content_type_type == "multipart/form-data" {
 
-            todo!("Multipart Formdata is not yet implemented!");
 
             let mut content_type_boundary = content_type_split.next()
                 .ok_or(tide::Error::from_str(400, "Boundary is not provided (A)"))?
@@ -227,7 +227,17 @@ async fn main() -> tide::Result<()> {
                 .ok_or(tide::Error::from_str(400,"Boundary is not provided (D)"))?;
 
             tide::log::trace!("Reading file from the request...");
-            req.take_body().into_reader();
+            let mut reader = req.take_body().into_reader();
+            loop {
+                let buf: &[u8] = reader.fill_buf().await?;
+                println!("%---");
+                println!("{:?}", std::str::from_utf8(buf));
+                let len = buf.len();
+                if len < 1 { break; }
+                reader.consume_unpin(len);
+
+            }
+            todo!();
 
 
         } else {
