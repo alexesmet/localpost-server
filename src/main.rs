@@ -115,8 +115,7 @@ impl State {
                 let token_bytes = base64::decode(token_encoded)
                     .map_err(|_| tide::Error::from_str(400, "Incorrectly encoded basic token"))?;
 
-                let token_string = String::from_utf8(token_bytes)
-                    .map_err(|_| tide::Error::from_str(500, "Having a hard time decoding base64 to ascii"))?;
+                let token_string = String::from_utf8(token_bytes)?;
 
                 let mut token_split = token_string.split(":");
                 
@@ -228,41 +227,79 @@ async fn main() -> tide::Result<()> {
                 return Err(tide::Error::from_str(400, "Boundary is not provided (C)"));
             }
 
-            let boundary = content_type_boundary.next()
-                .ok_or(tide::Error::from_str(400,"Boundary is not provided (D)"))?;
+            let boundary = format!("--{}\r\n", content_type_boundary.next()
+                .ok_or(tide::Error::from_str(400,"Boundary is not provided (D)"))?);
 
-            tide::log::debug!("Boundary is type is {}", &boundary);
+            tide::log::debug!("Boundary is {}", &boundary);
 
             let boundary_bytes = boundary.as_bytes();
 
             let mut reader = req.take_body().into_reader();
-            let mut counter = 0;
-            loop {
+            let mut form_fields = std::collections::HashMap::new();
 
+            loop {
                 let buf: &[u8] = reader.fill_buf().await?;
                 if buf.len() == 0 { break; }
                 if let Some(pos) = util::contains(&buf, &boundary_bytes) {
-                    let mut file = File::create(format!("o{}.txt", counter)).await?;
-                    let mut buf = &buf[pos+boundary_bytes.len()..];
-                    loop {
-                        if buf.len() == 0 { break; }
-                        if let Some(p) = util::contains(&buf, &boundary_bytes) {
-                            let file_end_buf = &buf[..p];
-                            let consumed_len = file_end_buf.len();
-                            file.write(file_end_buf).await?;
-                            reader.consume_unpin(consumed_len);
-                            break;
-                        }
-                        let consumed_len = buf.len();
-                        file.write(buf).await?;
-                        reader.consume_unpin(consumed_len);
-                        buf = reader.fill_buf().await?;
-                    }
+                    reader.consume_unpin(pos+boundary_bytes.len());
+                    let mut buf = reader.fill_buf().await?;
+                    if buf.len() == 0 { break; }
 
+                    let part_headers_end = util::contains(&buf, b"\r\n\r\n")
+                        .ok_or(tide::Error::from_str(400, "No double enter after boundary"))?;
+                    let part_headers = std::str::from_utf8(&buf[..part_headers_end])?;
+
+                    let body_part_info = util::multipart::BodyPartInfo::from_headers(part_headers)?;
+
+                    tide::log::debug!("--> {:?}", &body_part_info);
+
+                    reader.consume_unpin(part_headers_end + b"\r\n\r\n".len());
+                    buf = reader.fill_buf().await?;
+
+                    if let Some(filename) = body_part_info.file_name {
+                        let mut file = File::create(&filename).await?;
+                        loop {
+                            // TODO: Possible error! if boundary gets split between buffs we die
+                            if let Some(p) = util::contains(&buf, &boundary_bytes) {
+                                let file_end_buf = &buf[..p];
+                                let consumed_len = file_end_buf.len();
+                                file.write(file_end_buf).await?;
+                                reader.consume_unpin(consumed_len);
+                                break;
+                            }
+                            let consumed_len = buf.len();
+                            file.write(buf).await?;
+                            reader.consume_unpin(consumed_len);
+                            buf = reader.fill_buf().await?;
+                            if buf.len() == 0 { break; }
+                        }
+                        tide::log::debug!("Created {} file", filename);
+                    } else {
+                        let mut bytes = Vec::new();
+                        loop {
+                            // TODO: Possible error! if boundary gets split between buffs we die
+                            if let Some(p) = util::contains(&buf, &boundary_bytes) {
+                                let file_end_buf = &buf[..p];
+                                let consumed_len = file_end_buf.len();
+                                bytes.extend_from_slice(file_end_buf);
+                                reader.consume_unpin(consumed_len);
+                                break;
+                            }
+                            let consumed_len = buf.len();
+                            bytes.extend_from_slice(buf);
+                            reader.consume_unpin(consumed_len);
+                            buf = reader.fill_buf().await?;
+                            if buf.len() == 0 { break; }
+                        }
+                        let value = std::str::from_utf8(bytes.as_slice())?.to_string();
+                        form_fields.insert(body_part_info.field_name, value);
+                    }
                 }
-                counter += 1;
             }
-            todo!();
+            tide::log::debug!("{:#?}", form_fields);
+
+            return Ok(tide::Response::builder(tide::StatusCode::Accepted)
+                .build());
 
 
         } else {
@@ -299,8 +336,7 @@ async fn main() -> tide::Result<()> {
             tide::log::debug!("Selecting fresh messages...");
             let messages = repo.select_messages_for_user(user_id)?;
             tide::log::debug!("Rendering fresh page...");
-            let body = req.state().view.render_index(messages, users)
-                .map_err(|e| tide::Error::new(500, e))?;
+            let body = req.state().view.render_index(messages, users)?;
 
             return Ok(tide::Response::builder(200)
                 .body(body)

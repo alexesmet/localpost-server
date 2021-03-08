@@ -17,12 +17,81 @@ pub fn contains(slice: &[u8], subslice: &[u8]) -> Option<usize> {
             }
         }
         if slice.len() + streak < subslice.len() + i {
-            //break;
+            //break; // TODO uncomment
         }
         i += 1;
     }
     return None;
 }
+
+
+
+
+
+pub mod multipart {
+
+    #[derive(Debug)]
+    pub(crate) struct BodyPartInfo {
+        pub content_type: Option<String>,
+        pub field_name: String,
+        pub file_name: Option<String>
+    }
+
+    impl BodyPartInfo {
+        pub fn from_headers(headers: &str) -> Result<Self, tide::Error> {
+            let mut content_type = None;
+            let mut file_name = None;
+            let mut field_name = None;
+
+            for header in headers.split("\r\n") {
+                let mut header_split = header.split(": ");
+                match header_split.next().ok_or(tide::Error::from_str(400, "Malformed body"))? {
+                    "Content-Disposition" => {
+                        let mut disposition_split = header_split.next()
+                                .ok_or(tide::Error::from_str(400, "Malformed body"))?
+                                .split(";");
+                        let content_disposition = disposition_split.next()
+                            .ok_or(tide::Error::from_str(400, "Malformed body"))?;
+                        if content_disposition.trim() != "form-data" {
+                            return Err(tide::Error::from_str(400, "Unknown content disposition"));
+                        }
+                        for other in disposition_split.into_iter() {
+                            let mut key_value = other.trim().split("=");
+                            let key = key_value.next()
+                                .ok_or(tide::Error::from_str(400, "Malformed body"))?;
+                            let value = key_value.next()
+                                .ok_or(tide::Error::from_str(400, "Malformed body"))?
+                                .trim_matches('"');
+                        
+                            match key { 
+                                "name" => { field_name = Some(value.to_owned()) },
+                                "filename" => { file_name = Some(value.to_owned()) },
+                                _ => {}
+                            }
+
+
+                        }
+                    },
+                    "Content-Type" => {
+                        content_type = header_split.next().map(|v| v.to_owned()) ;
+                    },
+                    _ => {}
+
+                }
+
+            };
+            let field_name = field_name
+                .ok_or(tide::Error::from_str(400, "No fielname provided"))?;
+            return Ok(Self { field_name, content_type, file_name });
+        }
+    }
+}
+
+
+
+
+
+
 
 
 #[cfg(test)]
