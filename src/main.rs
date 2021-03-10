@@ -22,31 +22,12 @@ const TOKEN_EXPIRATION: time::Duration = time::Duration::from_secs(86400);
 struct State {
     repo: Arc<Mutex<repository::Repo>>,
     view: Arc<view::View>, 
-    messages_txs: Arc<Mutex<Vec<(u32, mpsc::Sender<model::MessageResponse>)>>>
 }
 
 impl State {
     fn lock_repo(&self) -> Result<MutexGuard<repository::Repo>, tide::Error> {
         tide::log::trace!("Locking repo...");
         return self.repo.lock().map_err(|e|tide::Error::from_str(500,format!("Couldn't lock database: {:?}",e)));
-    }
-
-    fn broadcast_message(&self, msg: &model::MessageResponse) -> Result<(), tide::Error> {
-        tide::log::debug!("Locking message listeners for notification...");
-        self.messages_txs.lock()
-            .map_err(|e| tide::Error::from_str(500, format!("Could not lock websockets: {:?}",e)))?
-            .retain(|(id, tx)| {
-                if !msg.sender_id.eq(id) && !msg.recipients.iter().any(|r| r.id.eq(id)) {
-                    return true;
-                }
-                let sending_result = tx.send(msg.clone());
-                if let Err(mpsc::SendError(_)) = sending_result { 
-                    tide::log::debug!("Removing one message listener");
-                    return false;
-                } else { return true; }
-            });
-        tide::log::debug!("Releasing message listeners for notification...");
-        return Ok(());
     }
     fn create_token(username: String, user_id: u32, exp_time: u64) -> String {
         let token_a = base64::encode(format!("{}:{}:{}", username, user_id, exp_time));
@@ -127,11 +108,8 @@ impl State {
 
                 let cred = model::UserCredentials { username: username.clone(), password };
 
-                let user_id: u32 = match repo.get_authenticated_user_id(&cred)? {
-                    Some(n) => { n }
-                    None => { repo.register_user(&cred)?
-                        .ok_or(tide::Error::from_str(401, "Incorrect username or password"))? }
-                };
+                let user_id: u32 = repo.get_authenticated_user_id(&cred)?
+                    .ok_or(tide::Error::from_str(401, "Incorrect username or password"))?;
 
                 return Ok((user_id, username));
             },
@@ -150,11 +128,9 @@ async fn main() -> tide::Result<()> {
         .expect("Could not load templates");
     tera.autoescape_on(vec!["html", ".sql"]);
 
-
     let mut app = tide::with_state( State {
         repo: Arc::new(Mutex::new(repo)),
         view: Arc::new(view::View { tera }),
-        messages_txs: Arc::new(Mutex::new(Vec::new()))
     });
     app.with(tide_compress::CompressMiddleware::new());
 
@@ -182,8 +158,8 @@ async fn main() -> tide::Result<()> {
 
         // render page
         let repo = req.state().lock_repo()?;
-        let messages = repo.select_messages_for_user(user_id)?;
-        let users = repo.select_users_all()?;
+        let messages = repo.select_messages()?;
+        let users = repo.select_users()?;
         let body = req.state().view.render_index(messages, users)
             .map_err(|e| tide::Error::new(500, e))?;
 
@@ -209,134 +185,40 @@ async fn main() -> tide::Result<()> {
         let content_type_type = content_type_split.next()
             .ok_or(tide::Error::from_str(400, "Content-Type is not provided"))?;
 
-        if content_type_type == "multipart/form-data" {
-
-            todo!("Multipart Formdata is not yet implemented!");
-
-            let mut content_type_boundary = content_type_split.next()
-                .ok_or(tide::Error::from_str(400, "Boundary is not provided (A)"))?
-                .trim()
-                .split("=");
-
-            if content_type_boundary.next()
-                .ok_or(tide::Error::from_str(400,"Boundary is not provided (B)"))? != "boundary" {
-                return Err(tide::Error::from_str(400, "Boundary is not provided (C)"));
-            }
-
-            let boundary = content_type_boundary.next()
-                .ok_or(tide::Error::from_str(400,"Boundary is not provided (D)"))?;
-
-            tide::log::trace!("Reading file from the request...");
-            req.take_body().into_reader();
-
-
-        } else {
-            // parse message
-            tide::log::trace!("Parsing message request as FORM..");
-            let body: std::collections::HashMap<String,String> = req.body_form().await?;
-            let repo = req.state().lock_repo()?;
-            let users = repo.select_users_all()?;
-            tide::log::trace!("Parsing message request..");
-            let text = body.get("text").ok_or(tide::Error::from_str(400, "Missing text field"))?;
-            let recipients: Vec<u32> = users.iter()
-                .map(|u| (u.id, format!("usr{}", u.id)))
-                .map(|i| (i.0, body.get(&i.1).is_some()))
-                .filter(|i| i.1)
-                .map(|i| i.0)
-                .collect();
-            // validate message
-            if recipients.len() == 0 {
-                return Ok(tide::Response::builder(400)
-                    .body(format!("No message recipients provided. Your message: {}", text))
-                    .build());
-            }
-            tide::log::trace!("Inserting message to DB..");
-            // insert message
-            let message = model::PostMessageRequest { recipients, text: text.to_string() };
-            let response = repo.insert_message(user_id, message)?;
-
-
-            // Send to websockets
-            tide::log::trace!("Broadcast message to listeners...");
-            req.state().broadcast_message(&response)?;
-            
-            // Return fresh page
-            tide::log::trace!("Selecting fresh messages...");
-            let messages = repo.select_messages_for_user(user_id)?;
-            tide::log::trace!("Rendering fresh page...");
-            let body = req.state().view.render_index(messages, users)
-                .map_err(|e| tide::Error::new(500, e))?;
-
-            return Ok(tide::Response::builder(200)
-                .body(body)
-                .content_type(tide::http::mime::HTML)
+        // parse message
+        tide::log::trace!("Parsing message request as FORM..");
+        let body: std::collections::HashMap<String,String> = req.body_form().await?;
+        let repo = req.state().lock_repo()?;
+        let users = repo.select_users()?;
+        tide::log::trace!("Parsing message request..");
+        let text = body.get("text").ok_or(tide::Error::from_str(400, "Missing text field"))?;
+        let recipients: Vec<u32> = users.iter()
+            .map(|u| (u.id, format!("usr{}", u.id)))
+            .map(|i| (i.0, body.get(&i.1).is_some()))
+            .filter(|i| i.1)
+            .map(|i| i.0)
+            .collect();
+        // validate message
+        if recipients.len() == 0 {
+            return Ok(tide::Response::builder(400)
+                .body(format!("No message recipients provided. Your message: {}", text))
                 .build());
         }
-    });
-
-    // websocket
-    app.at("/websocket").get(WebSocket::new(|req: Request<State>, mut stream| async move {
-        use std::borrow::Cow;
-
-        tide::log::trace!("Websocket: Reading first msg from websocket");
-        let first_msg = stream.next().await
-            .ok_or(tide_websockets::Error::Protocol(Cow::from("Unexpected end of stream")))??;
-
-        tide::log::trace!("Websockets: Received token");
-        let token: String = if let tide_websockets::Message::Text(s) = first_msg { Ok(s) } else {
-            Err(tide_websockets::Error::Protocol(Cow::from("Unexpected end of stream")))
-        }?;
-
-        tide::log::trace!("Websockets: Parsing token...");
-        let (_, user_id) = State::parse_token(&token)
-            .ok_or(tide_websockets::Error::Protocol(Cow::from("Could not parse token")))?;
-
-        tide::log::trace!("Websockets: Token parsed.");
-        let (tx, rx): (mpsc::Sender<_>, mpsc::Receiver<_>) = mpsc::channel();
-        tide::log::trace!("Websockets: Pushing listener to State...");
-        { req.state()
-            .messages_txs
-            .lock()
-            .map_err(|_| tide_websockets::Error::Protocol(Cow::from("Could not lock state")))?
-            .push( (user_id,tx) ); }
+        tide::log::trace!("Inserting message to DB..");
+        // insert message
+        let message = model::PostMessageRequest { recipients, text: text.to_string() };
+        let response = repo.insert_message(user_id, message)?;
         
-        tide::log::trace!("Websockets: Entering loop...");
-        loop {
-            let rcv = rx.recv();
-            if let Ok(msg) = rcv {
-                if let Err(_) = stream.send_json(&msg).await {
-                    break;
-                }
-            } else { break; }
-        }
-        return Ok(());
-    }));
+        // Return fresh page
+        tide::log::trace!("Selecting fresh messages...");
+        let messages = repo.select_messages()?;
+        tide::log::trace!("Rendering fresh page...");
+        let body = req.state().view.render_index(messages, users)
+            .map_err(|e| tide::Error::new(500, e))?;
 
-    // WIP
-    app.at("/messages").get(|req: Request<State>| async move {
-        // auth
-        let (user_id, _) = req.state().get_authenticated_user_id(&req)?;
-        // lock
-        let repo = req.state().lock_repo()?;
-        // get
-        let messages = repo.select_messages_for_user(user_id)?;
-
-        return Ok(json!(messages));
-
-    });
-
-    // REST post message. TODO: Two-way auth when https is ready
-    app.at("/messages").post(|mut req: Request<State>| async move {
-        let (user_id, _) = req.state().get_authenticated_user_id(&req)?;
-
-        let body: model::PostMessageRequest = req.body_json().await?;
-        let repo = req.state().lock_repo()?;
-        let response = repo.insert_message(user_id, body)?;
-
-        req.state().broadcast_message(&response)?;
-
-        return Ok(tide::Response::builder(201)
-            .body(json!(response))
+        return Ok(tide::Response::builder(200)
+            .body(body)
+            .content_type(tide::http::mime::HTML)
             .build());
     });
 

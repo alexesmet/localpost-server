@@ -15,15 +15,12 @@ struct ViewMessage {
     text: String,
     time: String,
     time_full: String,
-    recipients: Vec<ViewPerson>
 }
 
 #[derive(Serialize)]
 struct ViewPerson {
     id: u32,
     name: String,
-    acronym: String,
-    color: String
 }
 
 fn to_acronym(name: &str) -> String {
@@ -34,32 +31,23 @@ impl View {
     pub fn render_index(
         &self, 
         msgs: Vec<model::MessageResponse>, 
-        users: Vec<model::EmbeddedRecipient>
+        users: Vec<model::UserResponse>
     ) -> tera::Result<String> {
         let view_messages: Vec<ViewMessage> = msgs.iter()
             .map(|m| ViewMessage {
                 sender: ViewPerson { 
                     id: m.sender_id,
                     name: m.sender_name.clone(),
-                    acronym: to_acronym(&m.sender_name),
-                    color: m.sender_color.clone()
                 },
                 text: m.text.clone(),
                 time: chrono::offset::Local.timestamp(m.timestamp,0).format("%H:%M").to_string(),
                 time_full: chrono::offset::Local.timestamp(m.timestamp,0).format("%Y-%m-%d %H:%M:%S").to_string(),
-                recipients: m.recipients.iter().map(|r| ViewPerson {
-                    id: r.id,
-                    name: r.name.clone(),
-                    acronym: to_acronym(&r.name),
-                    color: r.color.clone(),
-                }).collect(), 
-                
             })
             .collect();
 
         let view_users: Vec<ViewPerson> = users.into_iter()
             .map(|u| ViewPerson {
-                id: u.id, color: u.color, name: u.name.clone(), acronym: to_acronym(&u.name)
+                id: u.id, name: u.name.clone()
             })
             .collect();
 
