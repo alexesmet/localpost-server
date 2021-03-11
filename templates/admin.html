@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Гостевая книга</title>
+  <link rel="stylesheet" href="static/style.css">
+  <link rel="shortcut icon" href="/static/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+  <header class="header">
+    <nav class="width-keeper">
+      <a href="/login">Гостевая Книга</a> &#8594; <span class="logo">Панель Администратора</span>
+    </nav>
+  </header>
+  <main>
+    <div class="d-flex justify-center">  
+    <article class="width-keeper">
+      <p><b>Список пользователей</b> (<a href="/user/add">добавить</a>)</p>
+      <table class="user-table"> 
+        <tr>
+          <th>Имя</th>
+          <th>Логин</th>
+          <th>Пароль</th>
+          <th>Админ.</th>
+          <th></th>
+        </tr>
+        {% for u in users %}
+        <tr>
+          <td>{{u.name}}</td>
+          <td>{{u.username}}</td>
+          <td>{{u.password}}</td>
+          <td>{{u.admin}}</td>
+          <td><a href="/user/edit/{{u.id}}" title="Редактировать">Ред.</a></td>
+        </tr>
+        {% endfor %}
+      </table>
+    </article>
+    </div>
+  </main>
+</body>
+</html>

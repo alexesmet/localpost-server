@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Гостевая книга</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="shortcut icon" href="/static/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+  <header class="header">
+    <nav class="width-keeper">
+      <a href="/login">Гостевая Книга</a> &#8594; 
+      <a href="/admin">Панель Администратора</a> &#8594; 
+      {% if user %}
+      <span class="logo">Редактирование пользователя</span>
+      {% else %}
+      <span class="logo">Создание пользователя</span>
+      {% endif %}
+    </nav>
+  </header>
+  <main>
+    <div class="d-flex justify-center">  
+    <article class="width-keeper">
+      {% if user %}
+      <p>
+        <b>Редактирование пользователя №{{ user.id }}. </b>
+        <a href="/user/delete/{{user.id}}">Удалить пользователя</a>
+      </p>
+      {% else %}
+      <p><b>Создание нового пользователя</b></p>
+      {% endif %}
+
+      {% if user %}
+      <form action="/user/edit/{{user.id}}" class="user-form" method="post">
+        <label for="name">Видимое имя пользователя:</label><br>
+        <input type="text" id="name" name="name" value="{{user.name}}"><br><br>
+        <label for="username">Логин для входа:</label><br>
+        <input type="text" id="username" name="username" value="{{user.username}}"><br><br>
+        <label for="password">Пароль для входа:</label><br>
+        <input type="text" id="password" name="password" value="{{user.password}}"><br><br>
+        <input type="checkbox" id="admin" name="admin" {% if user.admin -%} checked {%- endif %} >
+        <label for="admin">Пользователь может администрировать</label><br><br>
+      {% else %}
+      <form action="/user/add" class="user-form" method="post">
+        <label for="name">Видимое имя пользователя:</label><br>
+        <input type="text" id="name" name="name"><br><br>
+        <label for="username">Логин для входа:</label><br>
+        <input type="text" id="username" name="username"><br><br>
+        <label for="password">Пароль для входа:</label><br>
+        <input type="text" id="password" name="password"><br><br>
+        <input type="checkbox" id="admin" name="admin" >
+        <label for="admin">Пользователь может администрировать</label><br><br>
+      {% endif %}
+
+        <br>
+        <input type="submit" value="Сохранить">
+      </form> 
+      
+
+    </article>
+    </div>
+  </main>
+</body>
+</html>

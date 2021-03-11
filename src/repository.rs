@@ -1,6 +1,4 @@
 use rusqlite::{self, Connection, Error, params};
-use itertools::Itertools;
-use std::iter::{IntoIterator};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::convert::TryInto;
 
@@ -19,7 +17,7 @@ impl Repo {
                 username TEXT NOT NULL,
                 password TEXT NOT NULL,
                 name TEXT NOT NULL,
-                admin INTEGER NOT NULL DEFAUT 0
+                admin INTEGER NOT NULL DEFAULT 0
             );
         ", rusqlite::NO_PARAMS)?;
         conn.execute("
@@ -27,25 +25,63 @@ impl Repo {
                 text TEXT NOT NULL,
                 user_id INTEGER,
                 timestamp INTEGER,
-                FOREIGN KEY (user_id) REFERENCES users(ROWID)
+                FOREIGN KEY (user_id) REFERENCES users(ROWID) ON DELETE CASCADE
             )
         ", rusqlite::NO_PARAMS)?;
         return Ok(Self { conn });
     }
 
-    pub fn get_authenticated_user_id(&self, cred: &m::UserCredentials) -> Result<Option<u32>, Error> {
+    pub fn get_authenticated_user(&self, cred: &m::UserCredentials) -> Result<Option<m::UserResponse>, Error> {
         let mut stmt = self.conn.prepare("
-            SELECT u.ROWID FROM users u 
+            SELECT u.ROWID, u.name, u.username, u.admin, u.password FROM users u 
             WHERE lower(u.username) = ?1 AND u.password = ?2
         ")?;
 
         match stmt.query_row(params![cred.username.clone().to_lowercase(), cred.password], |row| {
-            Ok( row.get(0)? )
+            return Ok(m::UserResponse {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                username: row.get(2)?,
+                admin: row.get(3)?,
+                password: row.get(4)?
+            });
         }) {
             Ok(id) => { return Ok(Some(id)); }
             Err(Error::QueryReturnedNoRows) => { return Ok(None) }
             Err(n) => { return Err(n) }
         }
+    }
+
+    pub fn delete_user(&self, user_id: u32) -> Result<(), Error> {
+        self.conn.execute(
+            " DELETE FROM users WHERE ROWID = ?1",
+            &[user_id]
+        )?;
+        return Ok(());
+    }
+
+    pub fn delete_message(&self, user_id: u32) -> Result<(), Error> {
+        self.conn.execute(
+            " DELETE FROM messages WHERE ROWID = ?1",
+            &[user_id]
+        )?;
+        return Ok(());
+    }
+
+    pub fn update_user(&self, u: m::UserResponse) -> Result<(), Error> {
+        self.conn.execute(
+            "UPDATE users SET name = ?1, username = ?2, password = ?3, admin = ?4 WHERE ROWID = ?5",
+            params![u.name, u.username, u.password, if u.admin {1} else {0}, u.id]
+        )?;
+        return Ok(());
+    }
+
+    pub fn create_user(&self, u: m::UserResponse) -> Result<(), Error> {
+        self.conn.execute(
+            "INSERT INTO users (name, username, password, admin) VALUES (?1, ?2, ?3, ?4)",
+            params![u.name, u.username, u.password, if u.admin {1} else {0}]
+        )?;
+        return Ok(());
     }
 
     pub fn select_messages(&self) -> Result<Vec<m::MessageResponse>, Error> {
@@ -58,13 +94,13 @@ impl Repo {
                 m.timestamp
         ")?;
 
-        let row_array = stmt.query_map(params![ user_id ], |row| {
+        let row_array = stmt.query_map(params![], |row| {
             Ok( m::MessageResponse { 
                 id: row.get(0)?,
                 text: row.get(1)?,
                 timestamp: row.get(2)?,
-                sender_name: row.get(7)?,
-                sender_id: row.get(8)?
+                sender_name: row.get(3)?,
+                sender_id: row.get(4)?
             })
         })?.collect::<Result<Vec<_>,_>>()?;
         return Ok(row_array);
@@ -72,14 +108,17 @@ impl Repo {
 
     pub fn select_users(&self) -> Result<Vec<m::UserResponse>, Error> {
         let mut stmt = self.conn.prepare(" 
-            SELECT ROWID, name FROM users ORDER BY name
+            SELECT ROWID, name, username, admin, password FROM users ORDER BY name
         ")?;
 
         return Ok(stmt.query_map(params![], |row| {
-            Ok(m::UserResponse {
+            return Ok(m::UserResponse {
                 id: row.get(0)?,
                 name: row.get(1)?,
-            })
+                username: row.get(2)?,
+                admin: row.get(3)?,
+                password: row.get(4)?
+            });
         })?.collect::<Result<Vec<_>,_>>()?);
     }
 
@@ -95,15 +134,6 @@ impl Repo {
             " INSERT INTO messages (text, user_id, timestamp) VALUES (?1, ?2, ?3) ",
             &[req.text.clone(), sender_id.to_string(), now.to_string()]
         )?;
-
-        let rowid = self.conn.last_insert_rowid();
-        // TODO: Wrap in transaction 
-        for recp in req.recipients.iter() {
-            self.conn.execute(
-                "INSERT INTO message_recipients (user_id, message_id) VALUES (?1, ?2)",
-                params![ recp, rowid ]
-            )?;
-        }
         return Ok(());
 
     }

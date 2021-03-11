@@ -26,13 +26,17 @@ body {
 
 .header {
     width: 100%;
-    background-color: silver;
+    background-color: cadetblue;
     display: flex;
+    flex-direction: row;
     flex-grow: 0;
     justify-content: center;
+    color: white;
 }
 
-@media screen and (max-height: 700px) { .header { display: none } }
+.header a {
+    color: white;
+}
 
 .ellipsis {
     white-space: nowrap;
@@ -123,13 +127,14 @@ body {
 
 
 .button {
-    background: silver;
+    background: cadetblue;
     border: none;
     padding: 0.5rem 1em;
     outline: none;
     cursor: pointer;
     flex-grow: 0;
     font-weight: 800;
+    color: white;
 }
 
 .d-flex {
@@ -196,4 +201,21 @@ body {
 
 #form-status-bar {
     margin: 0.5rem
+}
+
+
+
+table.user-table {
+   border-collapse: collapse;
+   width: 100%;
+}
+
+table.user-table td, table.user-table th {
+   border: 1px solid silver;
+   padding: 0.5rem;
+   text-align: left;
+}
+
+form.user-form input[type=text] {
+  width: 100%;
 }

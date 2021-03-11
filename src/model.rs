@@ -3,14 +3,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 pub struct PostMessageRequest {
-    pub recipients: Vec<u32>,
     pub text: String
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct UserResponse {
     pub id: u32,
     pub name: String,
+    pub username: String,
+    pub password: String,
+    pub admin: bool
 }
 
 #[derive(Serialize, Clone)]

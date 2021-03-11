@@ -10,7 +10,15 @@
 <body>
   <header class="header">
     <nav class="width-keeper">
-      <div class="logo">Гостевая Книга</div>
+      <span class="logo">Гостевая Книга. </span>
+      {% if account %}
+      <span>Вы вошли как {{ account.name }}. </span>
+      {% if account.admin %}
+      <a href="/admin">Администрирование</a>
+      {% endif %}
+      {% else %}
+      <span><a href="/login">Войдите</a>, чтобы добавлять комментарии.</span>
+      {% endif %}
     </nav>
   </header>
   <main class="main">
@@ -20,7 +28,12 @@
         {% for msg in messages %}
         <div class="message">
           <div class="head">
-            <span style="color: {{msg.sender.color}}" title="{{msg.sender.name}}">{{ msg.sender.name }}</span>
+            <span style="color: cadetblue" title="{{msg.sender.name}}">{{ msg.sender.name }}</span>
+            {% if account %}
+            {% if account.admin %}
+            <a href="/delete/{{msg.id}}"style="color: red" title="Удалить сообщение">[X]</a>
+            {% endif %}
+            {% endif %}
             <span class="time" title="{{ msg.time_full }}">{{ msg.time }}</span>
           </div>
           <div class="text">
@@ -34,12 +47,17 @@
   </main>
   <footer class="d-flex justify-center footer">
     <div class="width-keeper">
+      {% if account %}
       <form action="" method="post" autocomplete="off" id="form" class="sender">
         <div class="d-flex mb-05">
           <input type="text" form="form" name="text" rows="1" cols="50" required>
           <input type="submit" value="Отправить" class="button">
         </div>
       </form>
+      {% else %} 
+      <div>Вы вошли как <b>Гость</b>. 
+      <span><a href="/login">Войдите</a>, чтобы добавлять комментарии.</span>
+      {% endif %}
     </div>
   </footer>
 </body>
