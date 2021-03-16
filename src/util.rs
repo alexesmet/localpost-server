@@ -1,6 +1,13 @@
+
+#[derive(PartialEq, Debug)]
+pub enum ContainsResult {
+    DoesNotContain,
+    PossiblyContains (usize),
+    Contains (usize)
+}
+
 /// Returns option of position of one subslice in an other
-pub fn contains(slice: &[u8], subslice: &[u8]) -> Option<usize> {
-    if slice.len() < subslice.len() { return None; }
+pub fn contains(slice: &[u8], subslice: &[u8]) -> ContainsResult {
 
     let mut streak = 0;
     let mut i = 0;
@@ -8,7 +15,7 @@ pub fn contains(slice: &[u8], subslice: &[u8]) -> Option<usize> {
         if slice[i] == subslice[streak] {
             streak += 1;
             if streak == subslice.len() {
-                return Some(i + 1 - streak);
+                return ContainsResult::Contains (i + 1 - streak);
             }
         } else {
             if streak > 0 {
@@ -16,12 +23,13 @@ pub fn contains(slice: &[u8], subslice: &[u8]) -> Option<usize> {
                 streak = 0;
             }
         }
-        if slice.len() + streak < subslice.len() + i {
-            //break; // TODO uncomment
-        }
         i += 1;
     }
-    return None;
+    if streak > 0 {
+        return ContainsResult::PossiblyContains (slice.len() - streak);
+    } else {
+        return ContainsResult::DoesNotContain;
+    }
 }
 
 
@@ -44,6 +52,7 @@ pub mod multipart {
             let mut field_name = None;
 
             for header in headers.split("\r\n") {
+                if header.is_empty() { continue; }
                 let mut header_split = header.split(": ");
                 match header_split.next().ok_or(tide::Error::from_str(400, "Malformed body"))? {
                     "Content-Disposition" => {
@@ -96,33 +105,45 @@ pub mod multipart {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[test]
     fn contains_works_with_bytes() {
-        assert_eq!(super::contains(&[1,2,3,4,5], &[1,2,3]), Some(0));
-        assert_eq!(super::contains(&[1,2,3,4,5], &[3,4,5]), Some(2));
-        assert_eq!(super::contains(&[1,2,1,2,3], &[1,2,1]), Some(0));
-        assert_eq!(super::contains(&[1,2,1,2,3], &[1,2,3]), Some(2));
-        assert_eq!(super::contains(&[1,2,3,4,5], &[1,2,5]), None);
-        assert_eq!(super::contains(&[1,2,3,4,5], &[4,5,6]), None);
-        assert_eq!(super::contains(&[1,2,1,2,3], &[1,2,4]), None);
+        assert_eq!(contains(&[1,2,3,4,5], &[1,2,3]), ContainsResult::Contains(0));
+        assert_eq!(contains(&[1,2,3,4,5], &[3,4,5]), ContainsResult::Contains(2));
+        assert_eq!(contains(&[1,2,1,2,3], &[1,2,1]), ContainsResult::Contains(0));
+        assert_eq!(contains(&[1,2,1,2,3], &[1,2,3]), ContainsResult::Contains(2));
+        assert_eq!(contains(&[1,2,3,4,5], &[1,2,5]), ContainsResult::DoesNotContain);
+        assert_eq!(contains(&[1,2,1,2,3], &[1,2,4]), ContainsResult::DoesNotContain);
+        assert_eq!(contains(&[1,2,3,4,5], &[4,5,6]), ContainsResult::PossiblyContains(3));
 
     }
 
     #[test]
     fn contains_works_with_strs() {
-        assert_eq!(super::contains(b"hello world", b"hello"), Some(0));
-        assert_eq!(super::contains(b"hello there", b"there"), Some(6));
-        assert_eq!(super::contains(b"----hello", b"--hello"), Some(2));
-        assert_eq!(super::contains(b"--hello there general", b"hello there"), Some(2));
-        assert_eq!(super::contains(b"hello there general", b"general kenobi"), None);
+        assert_eq!(contains(b"hello world", b"hello"), ContainsResult::Contains(0));
+        assert_eq!(contains(b"hello there", b"there"), ContainsResult::Contains(6));
+        assert_eq!(contains(b"----hello", b"--hello"), ContainsResult::Contains(2));
+        assert_eq!(contains(b"----hell", b"--hello"), ContainsResult::PossiblyContains(2));
+        assert_eq!(contains(b"--hello there general", b"hello there"), ContainsResult::Contains(2));
+        assert_eq!(contains(b"hello there general", b"general kenobi"), ContainsResult::PossiblyContains(12));
+        assert_eq!(contains(b"hello there kenobi", b"general kenobi"), ContainsResult::DoesNotContain);
     }
 
     #[test]
     fn contains_works_with_reqs() {
-        assert_eq!(super::contains(
-            b"------WebKitFormBoundaryGkEAO60J3WyaOnEr\r\nContent-Disposition: form-data; name=\"t", 
-              b"----WebKitFormBoundaryGkEAO60J3WyaOnEr"), 
-            Some(2)
+        assert_eq!(
+            contains(
+                b"------WebKitFormBoundaryGkEAO60J3WyaOnEr\r\nContent-Disposition: form-data; name=\"t", 
+                b"----WebKitFormBoundaryGkEAO60J3WyaOnEr"
+            ), 
+            ContainsResult::Contains(2)
+        );
+        assert_eq!(
+            contains(
+                b"------WebKitFormBoundaryGkEAO60J3Wya", 
+                b"----WebKitFormBoundaryGkEAO60J3WyaOnEr"
+            ), 
+            ContainsResult::PossiblyContains(2)
         );
     }
 

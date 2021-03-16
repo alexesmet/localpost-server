@@ -52,6 +52,7 @@ impl State {
         tide::log::debug!("Releasing message listeners for notification...");
         return Ok(());
     }
+
     fn create_token(username: String, user_id: u32, exp_time: u64) -> String {
         let token_a = base64::encode(format!("{}:{}:{}", username, user_id, exp_time));
         let token_a_salt = format!("{}{}", token_a, SERVER_SECRET);
@@ -203,7 +204,6 @@ async fn main() -> tide::Result<()> {
         let (user_id, _) = req.state().get_authenticated_user_id(&req)?;
 
         // get file
-        tide::log::debug!("Reading content-type from the request...");
         let content_type = req.header("Content-Type")
             .ok_or(tide::Error::from_str(400, "Content-Type is not provided"))?
             .last()
@@ -227,76 +227,103 @@ async fn main() -> tide::Result<()> {
                 return Err(tide::Error::from_str(400, "Boundary is not provided (C)"));
             }
 
-            let boundary = format!("--{}\r\n", content_type_boundary.next()
-                .ok_or(tide::Error::from_str(400,"Boundary is not provided (D)"))?);
+            let provided_boundary = content_type_boundary.next()
+                .ok_or(tide::Error::from_str(400,"Boundary is not provided (D)"))?;
 
-            tide::log::debug!("Boundary is {}", &boundary);
-
-            let boundary_bytes = boundary.as_bytes();
+            let boundary = format!("--{}", &provided_boundary);
+            let boundary = boundary.as_bytes();
 
             let mut reader = req.take_body().into_reader();
-            let mut form_fields = std::collections::HashMap::new();
+            //let mut form_fields = std::collections::HashMap::new();
 
+            let mut window: Vec<u8> = Vec::with_capacity(8192);
             loop {
-                let buf: &[u8] = reader.fill_buf().await?;
-                if buf.len() == 0 { break; }
-                if let Some(pos) = util::contains(&buf, &boundary_bytes) {
-                    reader.consume_unpin(pos+boundary_bytes.len());
-                    let mut buf = reader.fill_buf().await?;
-                    if buf.len() == 0 { break; }
+                if window.len() > 8192 {
+                    tide::log::warn!("Collected {} bytes before giving up", window.len());
+                    return Err(tide::Error::from_str(500, "Could not read multipart data - too big"));
+                }
+                let buf = reader.fill_buf().await?;
+                let buf_len = buf.len();
+                if buf_len == 0 && window.len() == 0 {
+                    return Err(tide::Error::from_str(500, "Unexpected end of entity stream (A)"));
+                }
 
-                    let part_headers_end = util::contains(&buf, b"\r\n\r\n")
-                        .ok_or(tide::Error::from_str(400, "No double enter after boundary"))?;
-                    let part_headers = std::str::from_utf8(&buf[..part_headers_end])?;
+                window.extend_from_slice(buf);
+                reader.consume_unpin(buf_len);
 
-                    let body_part_info = util::multipart::BodyPartInfo::from_headers(part_headers)?;
-
-                    tide::log::debug!("--> {:?}", &body_part_info);
-
-                    reader.consume_unpin(part_headers_end + b"\r\n\r\n".len());
-                    buf = reader.fill_buf().await?;
-
-                    if let Some(filename) = body_part_info.file_name {
-                        let mut file = File::create(&filename).await?;
-                        loop {
-                            // TODO: Possible error! if boundary gets split between buffs we die
-                            if let Some(p) = util::contains(&buf, &boundary_bytes) {
-                                let file_end_buf = &buf[..p];
-                                let consumed_len = file_end_buf.len();
-                                file.write(file_end_buf).await?;
-                                reader.consume_unpin(consumed_len);
+                match util::contains(&window, &boundary) {
+                    util::ContainsResult::DoesNotContain => {
+                        return Err(tide::Error::from_str(500, "Could not find boundary"));
+                    }
+                    util::ContainsResult::PossiblyContains(p) => {
+                        tide::log::warn!("Had to skip {} bytes to find boundary!", p);
+                    }
+                    util::ContainsResult::Contains(p) => {
+                        let shift = p + boundary.len();
+                        window.drain(..shift);
+                        if window.len() == 0 {
+                                tide::log::debug!("Success in reading multipart/form-data (kinda)");
+                                break;
+                        }
+                        if let util::ContainsResult::Contains(0) = util::contains(&window[..4], b"--\r\n") {
+                            if 0 == reader.fill_buf().await?.len() && window.len() == 4 {
+                                tide::log::debug!("Success in reading multipart/form-data");
                                 break;
                             }
-                            let consumed_len = buf.len();
-                            file.write(buf).await?;
-                            reader.consume_unpin(consumed_len);
-                            buf = reader.fill_buf().await?;
-                            if buf.len() == 0 { break; }
                         }
-                        tide::log::debug!("Created {} file", filename);
-                    } else {
-                        let mut bytes = Vec::new();
-                        loop {
-                            // TODO: Possible error! if boundary gets split between buffs we die
-                            if let Some(p) = util::contains(&buf, &boundary_bytes) {
-                                let file_end_buf = &buf[..p];
-                                let consumed_len = file_end_buf.len();
-                                bytes.extend_from_slice(file_end_buf);
-                                reader.consume_unpin(consumed_len);
-                                break;
+                        if let util::ContainsResult::Contains(p) = util::contains(&window, b"\r\n\r\n") {
+                            let headers_bytes: Vec<u8> = window.drain(..p+4).collect();
+                            let headers_slice = std::str::from_utf8(&headers_bytes)?;
+                            let info = util::multipart::BodyPartInfo::from_headers(&headers_slice)?;
+                            if let Some(file_name) = info.file_name {
+                                let mut file = File::create(file_name).await?;
+                                // let mut file = futures::io::BufWriter::new(file); 
+                                loop {
+                                    match util::contains(&window, &boundary) {
+                                        util::ContainsResult::DoesNotContain => {
+                                            dbg!(std::str::from_utf8(&window));
+                                            file.write_all(&window).await?;
+                                            window.clear();
+                                            let buf = reader.fill_buf().await?;
+                                            let buf_len = buf.len();
+                                            if buf_len == 0 {
+                                                return Err(tide::Error::from_str(500, 
+                                                        "Unexpected end of entity stream (B)"));
+                                            }
+                                            window.extend_from_slice(buf);
+                                            reader.consume_unpin(buf_len);
+                                        }
+                                        util::ContainsResult::PossiblyContains(p) => {
+                                            dbg!(std::str::from_utf8(&window));
+                                            for byte in window.drain(..p) {
+                                                file.write_all(std::slice::from_ref(&byte)).await?;
+                                            }
+                                            let buf = reader.fill_buf().await?;
+                                            let buf_len = buf.len();
+                                            if buf_len == 0 {
+                                                return Err(tide::Error::from_str(500, 
+                                                        "Unexpected end of entity stream (C)"));
+                                            }
+                                            window.extend_from_slice(buf);
+                                            reader.consume_unpin(buf_len);
+                                        }
+                                        util::ContainsResult::Contains(p) => {
+                                            dbg!(std::str::from_utf8(&window));
+                                            if p > 0 {
+                                                for byte in window.drain(..p-2) {
+                                                    file.write_all(std::slice::from_ref(&byte)).await?;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
                             }
-                            let consumed_len = buf.len();
-                            bytes.extend_from_slice(buf);
-                            reader.consume_unpin(consumed_len);
-                            buf = reader.fill_buf().await?;
-                            if buf.len() == 0 { break; }
                         }
-                        let value = std::str::from_utf8(bytes.as_slice())?.to_string();
-                        form_fields.insert(body_part_info.field_name, value);
                     }
                 }
             }
-            tide::log::debug!("{:#?}", form_fields);
+
 
             return Ok(tide::Response::builder(tide::StatusCode::Accepted)
                 .build());
