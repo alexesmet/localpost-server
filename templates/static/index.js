@@ -23,7 +23,7 @@ const showError = err => {
     let msg = document.createElement("span");
     msg.style.color = "red";
     msg.style.cursor = "pointer";
-    msg.innerText = "{error}"
+    msg.innerText = "!error!"
     msg.onclick = () => {
         let pre = document.createElement("pre");
         pre.textContent = err + "\n===\n" + JSON.stringify(err, null, 2);
@@ -175,7 +175,7 @@ socket.onmessage = e => {
 // =============================================================================
 // AJAX POST FORM
 
-form.addEventListener("submitb", async e => {
+form.addEventListener("submit_______", async e => {
     e.preventDefault();
     let data = { 
         text: form_text.value,
