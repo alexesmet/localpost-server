@@ -1,6 +1,6 @@
 const cookies = () => document.cookie
     .split(";")
-    .reduce((o,c) => ({...o, [/[^ =]+/.exec(c).strip()]: /(?<=\=).+/.exec(c)[0]}), {});
+    .reduce((o,c) => ({...o, [/[^ =]+/.exec(c)[0].trim()]: /(?<=\=).+/.exec(c)[0]}), {});
 
 
 const form = document.querySelector("form.sender");
@@ -175,21 +175,31 @@ socket.onmessage = e => {
 // =============================================================================
 // AJAX POST FORM
 
-form.addEventListener("submit_______", async e => {
+form.addEventListener("submit", async e => {
     e.preventDefault();
-    let data = { 
-        text: form_text.value,
-        recipients: r_checks.filter(c => c.checked).map(c => +c.getAttribute("data-id"))
-    };
+    const formData = new FormData(form);
 
-    await fetch(window.location.origin+"/messages", {
+    await fetch(window.location.origin, {
         method: "POST",
-        body: JSON.stringify(data),
+        body: formData,
         credentials: 'same-origin',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+    }).then(s => {
+        if (s.status == 200) form.reset();
+        else showError(s); 
     }).catch(e => {
         showError(e)
     });
+
+});
+
+// =============================================================================
+// AUTO CLOSE POPUP CONTAINERS
+
+window.addEventListener("click", (e) => {
+    for (i of e.path) { 
+        if (i.className && i.className.includes("popup-container")) { return; }
+    }
+    for (c of document.querySelectorAll(".popup-container input.popup-trigger")) {
+        c.checked = false;
+    }
 });

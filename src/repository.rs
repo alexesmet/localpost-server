@@ -37,17 +37,26 @@ impl Repo {
         conn.execute("
             CREATE TABLE IF NOT EXISTS messages (
                 text TEXT NOT NULL,
-                user_id INTEGER,
-                timestamp INTEGER,
+                user_id INTEGER NOT NULL,
+                timestamp INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(ROWID)
             )
         ", rusqlite::NO_PARAMS)?;
         conn.execute("
             CREATE TABLE IF NOT EXISTS message_recipients (
-                user_id INTEGER,
-                message_id INTEGER,
+                user_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(ROWID),
                 FOREIGN KEY (message_id) REFERENCES messages(ROWID)
+            );
+        ", rusqlite::NO_PARAMS)?;
+        conn.execute("
+            CREATE TABLE IF NOT EXISTS files (
+                original_name TEXT_NOT_NULL,
+                stored_name TEXT NOT NULL,
+                owner_id INTEGER NOT NULL,
+                is_deleted INTEGER NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(ROWID)
             );
         ", rusqlite::NO_PARAMS)?;
         return Ok(Self { conn });

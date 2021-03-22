@@ -274,7 +274,8 @@ async fn main() -> tide::Result<()> {
                             let info = util::multipart::BodyPartInfo::from_headers(&headers_slice)?;
 
                             if let Some(file_name) = info.file_name {
-                                let mut file = File::create(file_name).await?;
+                                if file_name.is_empty() { continue; }
+                                let     file = File::create(file_name).await?;
                                 let mut file = futures::io::BufWriter::new(file); 
                                 loop {
                                     match util::contains(&window, &boundary) {
@@ -343,6 +344,7 @@ async fn main() -> tide::Result<()> {
         } else {
             body = req.body_form().await?;
         }
+
 
         let repo = req.state().lock_repo()?;
         let users = repo.select_users_all()?;
