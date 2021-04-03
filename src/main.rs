@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time;
 use tide_websockets::WebSocket;
+use futures::io::AsyncBufReadExt;
 use async_std::stream::StreamExt;
+use async_std::fs::File;
+use async_std::prelude::*;
 use tide::prelude::json;
 use tide::Request;
 use std::iter::Iterator;
@@ -12,6 +15,7 @@ use tera;
 use base64;
 
 mod view;
+mod util;
 mod model;
 mod repository;
 
@@ -27,7 +31,7 @@ struct State {
 
 impl State {
     fn lock_repo(&self) -> Result<MutexGuard<repository::Repo>, tide::Error> {
-        tide::log::trace!("Locking repo...");
+        tide::log::debug!("Locking repo...");
         return self.repo.lock().map_err(|e|tide::Error::from_str(500,format!("Couldn't lock database: {:?}",e)));
     }
 
@@ -48,6 +52,7 @@ impl State {
         tide::log::debug!("Releasing message listeners for notification...");
         return Ok(());
     }
+
     fn create_token(username: String, user_id: u32, exp_time: u64) -> String {
         let token_a = base64::encode(format!("{}:{}:{}", username, user_id, exp_time));
         let token_a_salt = format!("{}{}", token_a, SERVER_SECRET);
@@ -92,7 +97,7 @@ impl State {
             .ok_or(tide::Error::from_str(400, "Unexpected end of Authorization token"))?;
 
         let repo = self.lock_repo()?;
-        tide::log::trace!("AUTH: Repo locked.");
+        tide::log::debug!("AUTH: Repo locked.");
 
         match auth_type {
             "Bearer" => {
@@ -111,8 +116,7 @@ impl State {
                 let token_bytes = base64::decode(token_encoded)
                     .map_err(|_| tide::Error::from_str(400, "Incorrectly encoded basic token"))?;
 
-                let token_string = String::from_utf8(token_bytes)
-                    .map_err(|_| tide::Error::from_str(500, "Having a hard time decoding base64 to ascii"))?;
+                let token_string = String::from_utf8(token_bytes)?;
 
                 let mut token_split = token_string.split(":");
                 
@@ -142,7 +146,7 @@ impl State {
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
-    tide::log::with_level(tide::log::LevelFilter::Info);
+    tide::log::with_level(tide::log::LevelFilter::Debug);
 
     let repo = repository::Repo::new("messages.db")
         .expect("Error while initializing database");
@@ -191,7 +195,7 @@ async fn main() -> tide::Result<()> {
             .body(body)
             .content_type(tide::http::mime::HTML)
             .header("Set-Cookie", format!("token={}; Max-Age={}", token, TOKEN_EXPIRATION.as_secs()))
-            .build());
+            .build())
     });
 
     // html form 
@@ -200,19 +204,18 @@ async fn main() -> tide::Result<()> {
         let (user_id, _) = req.state().get_authenticated_user_id(&req)?;
 
         // get file
-        tide::log::trace!("Reading content-type from the request...");
         let content_type = req.header("Content-Type")
             .ok_or(tide::Error::from_str(400, "Content-Type is not provided"))?
-            .as_str();
+            .last()
+            .as_str()
+            .to_string();
 
         let mut content_type_split = content_type.split(";");
         let content_type_type = content_type_split.next()
             .ok_or(tide::Error::from_str(400, "Content-Type is not provided"))?;
 
+        let mut body = std::collections::HashMap::<String, String>::new();
         if content_type_type == "multipart/form-data" {
-
-            todo!("Multipart Formdata is not yet implemented!");
-
             let mut content_type_boundary = content_type_split.next()
                 .ok_or(tide::Error::from_str(400, "Boundary is not provided (A)"))?
                 .trim()
@@ -223,84 +226,184 @@ async fn main() -> tide::Result<()> {
                 return Err(tide::Error::from_str(400, "Boundary is not provided (C)"));
             }
 
-            let boundary = content_type_boundary.next()
+            let provided_boundary = content_type_boundary.next()
                 .ok_or(tide::Error::from_str(400,"Boundary is not provided (D)"))?;
 
-            tide::log::trace!("Reading file from the request...");
-            req.take_body().into_reader();
+            let boundary = format!("--{}", &provided_boundary);
+            let boundary = boundary.as_bytes();
 
+            let mut reader = req.take_body().into_reader();
+            let mut window: Vec<u8> = Vec::with_capacity(8192);
+            loop {
+                if window.len() > 8192 {
+                    tide::log::warn!("Collected {} bytes before giving up", window.len());
+                    return Err(tide::Error::from_str(500, "Could not read multipart data - too big"));
+                }
+                let buf = reader.fill_buf().await?;
+                let buf_len = buf.len();
+                if buf_len == 0 && window.len() == 0 {
+                    return Err(tide::Error::from_str(500, "Unexpected end of entity stream (A)"));
+                }
 
-        } else {
-            // parse message
-            tide::log::trace!("Parsing message request as FORM..");
-            let body: std::collections::HashMap<String,String> = req.body_form().await?;
-            let repo = req.state().lock_repo()?;
-            let users = repo.select_users_all()?;
-            tide::log::trace!("Parsing message request..");
-            let text = body.get("text").ok_or(tide::Error::from_str(400, "Missing text field"))?;
-            let recipients: Vec<u32> = users.iter()
-                .map(|u| (u.id, format!("usr{}", u.id)))
-                .map(|i| (i.0, body.get(&i.1).is_some()))
-                .filter(|i| i.1)
-                .map(|i| i.0)
-                .collect();
-            // validate message
-            if recipients.len() == 0 {
-                return Ok(tide::Response::builder(400)
-                    .body(format!("No message recipients provided. Your message: {}", text))
-                    .build());
+                window.extend_from_slice(buf);
+                reader.consume_unpin(buf_len);
+
+                match util::contains(&window, &boundary) {
+                    util::ContainsResult::DoesNotContain => {
+                        return Err(tide::Error::from_str(500, "Could not find boundary"));
+                    }
+                    util::ContainsResult::PossiblyContains(p) => {
+                        tide::log::warn!("Had to skip {} bytes to find boundary!", p);
+                    }
+                    util::ContainsResult::Contains(p) => {
+                        let shift = p + boundary.len();
+                        window.drain(..shift);
+                        if window.len() == 0 {
+                                tide::log::debug!("Success in reading multipart/form-data (kinda)");
+                                break;
+                        }
+                        if let util::ContainsResult::Contains(0) = util::contains(&window[..4], b"--\r\n") {
+                            if 0 == reader.fill_buf().await?.len() && window.len() == 4 {
+                                tide::log::debug!("Success in reading multipart/form-data");
+                                break;
+                            }
+                        }
+                        if let util::ContainsResult::Contains(p) = util::contains(&window, b"\r\n\r\n") {
+                            let headers_bytes: Vec<u8> = window.drain(..p+4).collect();
+                            let headers_slice = std::str::from_utf8(&headers_bytes)?;
+                            let info = util::multipart::BodyPartInfo::from_headers(&headers_slice)?;
+
+                            if let Some(file_name) = info.file_name {
+                                if file_name.is_empty() { continue; }
+                                let     file = File::create(file_name).await?;
+                                let mut file = futures::io::BufWriter::new(file); 
+                                loop {
+                                    match util::contains(&window, &boundary) {
+                                        util::ContainsResult::DoesNotContain => {
+                                            file.write_all(&window).await?;
+                                            window.clear();
+                                            let buf = reader.fill_buf().await?;
+                                            let buf_len = buf.len();
+                                            if buf_len == 0 {
+                                                return Err(tide::Error::from_str(500, 
+                                                        "Unexpected end of entity stream (B)"));
+                                            }
+                                            window.extend_from_slice(buf);
+                                            reader.consume_unpin(buf_len);
+                                        }
+                                        util::ContainsResult::PossiblyContains(p) => {
+                                            for byte in window.drain(..p) {
+                                                file.write_all(std::slice::from_ref(&byte)).await?;
+                                            }
+                                            let buf = reader.fill_buf().await?;
+                                            let buf_len = buf.len();
+                                            if buf_len == 0 {
+                                                return Err(tide::Error::from_str(500, 
+                                                        "Unexpected end of entity stream (C)"));
+                                            }
+                                            window.extend_from_slice(buf);
+                                            reader.consume_unpin(buf_len);
+                                        }
+                                        util::ContainsResult::Contains(p) => {
+                                            if p > 0 {
+                                                for byte in window.drain(..p-2) {
+                                                    file.write_all(std::slice::from_ref(&byte)).await?;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                file.flush().await?;
+                            } else {
+                                loop {
+                                    match util::contains(&window, &boundary) {
+                                        util::ContainsResult::Contains(p) => {
+                                            let value = String::from_utf8(window.drain(..p).collect())
+                                                .map_err(|e| tide::Error::new(422, e))?;
+                                            body.insert(info.field_name, value);
+                                            break;
+                                        }
+                                        _ => {
+                                            let buf = reader.fill_buf().await?;
+                                            let buf_len = buf.len();
+                                            if buf_len == 0 && window.len() == 0 {
+                                                return Err(tide::Error::from_str(500,
+                                                        "Unexpected end of entity stream (D)"));
+                                            }
+                                            window.extend_from_slice(buf);
+                                            reader.consume_unpin(buf_len);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            tide::log::trace!("Inserting message to DB..");
-            // insert message
-            let message = model::PostMessageRequest { recipients, text: text.to_string() };
-            let response = repo.insert_message(user_id, message)?;
+        } else {
+            body = req.body_form().await?;
+        }
 
 
-            // Send to websockets
-            tide::log::trace!("Broadcast message to listeners...");
-            req.state().broadcast_message(&response)?;
-            
-            // Return fresh page
-            tide::log::trace!("Selecting fresh messages...");
-            let messages = repo.select_messages_for_user(user_id)?;
-            tide::log::trace!("Rendering fresh page...");
-            let body = req.state().view.render_index(messages, users)
-                .map_err(|e| tide::Error::new(500, e))?;
+        let repo = req.state().lock_repo()?;
+        let users = repo.select_users_all()?;
+        let text = body.get("text")
+            .ok_or(tide::Error::from_str(400, "Missing text field"))?;
 
-            return Ok(tide::Response::builder(200)
-                .body(body)
-                .content_type(tide::http::mime::HTML)
+        let recipients: Vec<u32> = users.iter()
+            .map(|u| (u.id, format!("usr{}", u.id)))
+            .map(|i| (i.0, body.get(&i.1).is_some()))
+            .filter(|i| i.1)
+            .map(|i| i.0)
+            .collect();
+        if recipients.len() == 0 {
+            return Ok(tide::Response::builder(400)
+                .body(format!("No message recipients provided. Your message: {}", text))
                 .build());
         }
+
+        let message = model::PostMessageRequest { recipients, text: text.to_string() };
+        let response = repo.insert_message(user_id, message)?;
+
+        req.state().broadcast_message(&response)?;
+        
+        let messages = repo.select_messages_for_user(user_id)?;
+        let body = req.state().view.render_index(messages, users)?;
+
+        return Ok(tide::Response::builder(200)
+            .body(body)
+            .content_type(tide::http::mime::HTML)
+            .build());
     });
 
     // websocket
     app.at("/websocket").get(WebSocket::new(|req: Request<State>, mut stream| async move {
         use std::borrow::Cow;
 
-        tide::log::trace!("Websocket: Reading first msg from websocket");
+        tide::log::debug!("Websocket: Reading first msg from websocket");
         let first_msg = stream.next().await
             .ok_or(tide_websockets::Error::Protocol(Cow::from("Unexpected end of stream")))??;
 
-        tide::log::trace!("Websockets: Received token");
+        tide::log::debug!("Websockets: Received token");
         let token: String = if let tide_websockets::Message::Text(s) = first_msg { Ok(s) } else {
             Err(tide_websockets::Error::Protocol(Cow::from("Unexpected end of stream")))
         }?;
 
-        tide::log::trace!("Websockets: Parsing token...");
+        tide::log::debug!("Websockets: Parsing token...");
         let (_, user_id) = State::parse_token(&token)
             .ok_or(tide_websockets::Error::Protocol(Cow::from("Could not parse token")))?;
 
-        tide::log::trace!("Websockets: Token parsed.");
+        tide::log::debug!("Websockets: Token parsed.");
         let (tx, rx): (mpsc::Sender<_>, mpsc::Receiver<_>) = mpsc::channel();
-        tide::log::trace!("Websockets: Pushing listener to State...");
+        tide::log::debug!("Websockets: Pushing listener to State...");
         { req.state()
             .messages_txs
             .lock()
             .map_err(|_| tide_websockets::Error::Protocol(Cow::from("Could not lock state")))?
             .push( (user_id,tx) ); }
         
-        tide::log::trace!("Websockets: Entering loop...");
+        tide::log::debug!("Websockets: Entering loop...");
         loop {
             let rcv = rx.recv();
             if let Ok(msg) = rcv {

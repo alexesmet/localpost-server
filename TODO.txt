@@ -1,7 +1,4 @@
 - Offline fonts
-- Websockets for messages
-- Javascript for button to send without reload
-- Add favorite recepient list on bottom
 - Hide popup on clickout
 - multiline editor
 - limit amount of messages
