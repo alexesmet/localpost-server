@@ -216,6 +216,7 @@ async fn main() -> tide::Result<()> {
 
         let mut body = std::collections::HashMap::<String, String>::new();
         if content_type_type == "multipart/form-data" {
+            //Можно найти подстроку boundary= и избавится от сплита
             let mut content_type_boundary = content_type_split.next()
                 .ok_or(tide::Error::from_str(400, "Boundary is not provided (A)"))?
                 .trim()
@@ -403,6 +404,7 @@ async fn main() -> tide::Result<()> {
             .map_err(|_| tide_websockets::Error::Protocol(Cow::from("Could not lock state")))?
             .push( (user_id,tx) ); }
         
+
         tide::log::debug!("Websockets: Entering loop...");
         loop {
             let rcv = rx.recv();
