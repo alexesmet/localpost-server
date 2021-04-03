@@ -5,6 +5,7 @@ const cookies = () => document.cookie
 
 const form = document.querySelector("form.sender");
 const form_text = document.querySelector("form.sender input[name=text]");
+const form_file = document.querySelector("form.sender input[name=upload-file");
 const statusbar = document.getElementById("form-status-bar");
 const submit = document.querySelector("form.sender input[type=submit]");
 const r_checks = Array.from(document.querySelectorAll("form.sender input[type=checkbox].recipient-checkbox"));
@@ -19,19 +20,21 @@ let status_bar_wellformed = false;
 // =============================================================================
 // TO SHOW ERRORS
 
-const showError = err => {
+const showError = (err,code) => {
     let msg = document.createElement("span");
     msg.style.color = "red";
     msg.style.cursor = "pointer";
     msg.innerText = "!error!"
     msg.onclick = () => {
         let pre = document.createElement("pre");
-        pre.textContent = err + "\n===\n" + JSON.stringify(err, null, 2);
+        pre.textContent = err + "; CODE=" + code + "\n===\n" + JSON.stringify(err, null, 2);
         document.body.innerHTML = '';
         document.body.appendChild(pre);
     }
     statusbar.innerHTML = ''
     statusbar.replaceChildren(msg);
+    console.error(code, err);
+    status_bar_wellformed = false;
 
 }
 
@@ -105,7 +108,7 @@ const renderStatusBar = () => {
   if (is_empty) {
     statusbar.textContent = "> []";
   } else {
-    statusbar.removeChild(last_comma)  
+    if (last_comma) statusbar.removeChild(last_comma);
     statusbar.appendChild(bracket);
   }
   status_bar_wellformed = true;
@@ -152,7 +155,6 @@ socket.onmessage = e => {
     head_part.appendChild(document.createTextNode("]"));
 
     let time = new Date(data.timestamp*1000);
-    console.log(time);
     let time_span = document.createElement("span");
     time_span.title = "" + time.getYear() + "-"
             + time.getMonth() + "-"
@@ -160,7 +162,8 @@ socket.onmessage = e => {
             + time.getHours() + ":"
             + time.getMinutes() + ":"
             + time.getSeconds();
-    time_span.textContent = "" + time.getHours() + ":" + time.getMinutes();
+    time_span.textContent = (""+time.getHours()).padStart(2,'0') 
+        + ":" + (""+time.getMinutes()).padStart(2,'0');
     time_span.className = "time";
     head_part.appendChild(time_span);
     
@@ -184,10 +187,13 @@ form.addEventListener("submit", async e => {
         body: formData,
         credentials: 'same-origin',
     }).then(s => {
-        if (s.status == 200) form.reset();
-        else showError(s); 
+        if (s.status == 200) {
+            form_text.value = '';
+            form_file.value = '';
+
+        } else showError(s, "FORM_POST_THEN"); 
     }).catch(e => {
-        showError(e)
+        showError(e, "FORM_POST_CATCH")
     });
 
 });
