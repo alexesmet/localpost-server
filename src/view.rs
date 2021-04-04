@@ -3,7 +3,10 @@ use serde::Serialize;
 use chrono::TimeZone;
 use crate::model;
 use regex;
+use regex::Regex;
 use chrono;
+use lazy_static::lazy_static;
+
 
 pub struct View {
     pub tera: tera::Tera
@@ -26,8 +29,12 @@ struct ViewPerson {
     color: String
 }
 
+lazy_static!{
+    static ref MATCHER : Regex = regex::Regex::new("[[:upper:]]").unwrap();
+}
+
 fn to_acronym(name: &str) -> String {
-    return regex::Regex::new("[[:upper:]]").unwrap().find_iter(name).fold(String::new(),|a,b| a+b.as_str());
+    return MATCHER.find_iter(name).fold(String::new(),|a,b| a+b.as_str());
 }
 
 impl View {
