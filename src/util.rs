@@ -6,22 +6,61 @@ pub enum ContainsResult {
     Contains (usize)
 }
 
+//generate bm_bc for Boyer-Moore algorithm.
+fn generate_bm_bc(subslice: &[u8]) -> [u8; 256] {
+    let len = subslice.len() as u8;
+    let mut bm_bc: [u8; 256] = [len; 256];
+
+    for i in 0..len - 1 {
+        bm_bc[ subslice[i as usize] as usize ] = len - i - 1;
+    }
+    return bm_bc;
+}
+
+
+//find subslice with Boyer-Moore algorithm.
+fn find_subslice(slice: &[u8], subslice: &[u8]) -> Option<usize> {
+    let size_subslice = subslice.len();
+    let size_slice = slice.len();
+    let mut j = 0;
+    let bm_bc = generate_bm_bc(subslice);
+    let mut c;
+   /* Searching */
+
+    while j <= (size_slice - size_subslice) {
+        c = slice[j + size_subslice - 1];
+        if subslice[size_subslice - 1] == c && 
+            subslice[..size_subslice] == slice[j..j+size_subslice] {
+            return Some(j);
+        }
+        j += bm_bc[c as usize] as usize;
+    }
+
+    return None;
+}
+
 /// Returns option of position of one subslice in an other
 pub fn contains(slice: &[u8], subslice: &[u8]) -> ContainsResult {
+   
+    let mut i;
+
+    if slice.len() >= subslice.len() {
+        if let Some(value) = find_subslice(slice, subslice) {
+            return ContainsResult::Contains(value);
+        }
+        i = slice.len() + 1 - subslice.len();
+    }
+    else {
+        i = 0;
+    }
 
     let mut streak = 0;
-    let mut i = 0;
     while i < slice.len() {
         if slice[i] == subslice[streak] {
             streak += 1;
-            if streak == subslice.len() {
-                return ContainsResult::Contains (i + 1 - streak);
-            }
         } else {
-            if streak > 0 {
-                i -= streak;
-                streak = 0;
-            }
+            i -= streak;
+            streak = 0;
         }
         i += 1;
     }
