@@ -386,7 +386,9 @@ async fn main() -> tide::Result<()> {
             .ok_or(tide_websockets::Error::Protocol(Cow::from("Unexpected end of stream")))??;
 
         tide::log::debug!("Websockets: Received token");
-        let token: String = if let tide_websockets::Message::Text(s) = first_msg { Ok(s) } else {
+        let token: String = if let tide_websockets::Message::Text(s) = first_msg {
+            Ok(s) 
+        } else {
             Err(tide_websockets::Error::Protocol(Cow::from("Unexpected end of stream")))
         }?;
 

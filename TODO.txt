@@ -1,5 +1,7 @@
 - Offline fonts
-- Hide popup on clickout
 - multiline editor
 - limit amount of messages
-- уведомления
+- Уведомления
+- Добавить флаг, чтобы при POST можно было не рендерить HTML страницу
+- Вынести multipart в отдельный крейт
+- 
